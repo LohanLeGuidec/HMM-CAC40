@@ -1,21 +1,57 @@
 # Stratégie HMM CAC40
 
-Projet M2 Big Data : détection de régimes de marché (HMM) sur le CAC40 et allocation
-d'un portefeuille d'actions par bêta, pour tenter de battre l'indice.
+Projet de M2 Big Data portant sur la détection de régimes de marché via un Hidden Markov Model (HMM) appliqué au CAC40, puis sur l’allocation dynamique d’un portefeuille d’actions à partir d’un signal de bêta et de momentum.
+
+L’objectif est d’évaluer si la combinaison d’un modèle de régimes de marché et d’une allocation probabiliste permet de surperformer l’indice de référence sur des périodes de stress et de reprise.
+
+## Vue d’ensemble
+
+- Détection des régimes de marché via HMM
+- Importation des données de marché et des taux sans risque
+- Estimation des betas glissants et du momentum
+- Calcul d’allocations conditionnelles par régime
+- Backtest d’une stratégie de portefeuille
+- Export de données pour Power BI
+- Dashboard Django pour visualisation
+
+## Architecture du projet
+
+```
+apps/
+├── dashboard/          # interface utilisateur et visualisation
+├── market_data/        # import, stockage et export des données marché
+├── portfolio/          # portefeuille, backtest et métriques
+├── regimes/            # entraînement HMM et gestion des régimes
+├── ...
+config/                 # settings Django et URLs
+requirements/           # dépendances Python
+theme/                  # frontend / templates thématiques
+docs/                   # cahier des charges et documentation technique
+```
 
 ## Documentation
 
-Toute la spécification du projet est dans [docs/](docs/) (01 à 07, à lire dans l'ordre).
+La spécification complète du projet est disponible dans le dossier [docs/](docs/) et doit être lue dans l’ordre :
+
+1. 01_cahier_des_charges.md
+2. 02_donnees_marche.md
+3. 03_modele_hmm.md
+4. 04_beta_allocation.md
+5. 05_backtest_metriques.md
+6. 06_architecture_technique.md
+7. 07_roadmap.md
 
 ## Installation
 
-```
-activate.cmd          # crée le venv et installe requirements/base.txt + dev.txt
+```bash
+activate.cmd
 ```
 
-## Pipeline (ordre d'exécution)
+Cette commande prépare l’environnement virtuel et installe les dépendances listées dans `requirements/base.txt` et `requirements/dev.txt`.
 
-```
+## Pipeline d’exécution
+
+```bash
 python manage.py import_donnees_marche      # Yahoo Finance + FRED -> DuckDB
 python manage.py importer_taux_sans_risque
 python manage.py entrainer_hmm               # régimes de marché (walk-forward)
@@ -28,14 +64,26 @@ python manage.py runserver                   # dashboard sur http://127.0.0.1:80
 
 ## Tests
 
-```
+```bash
 python -m pytest -q
 ```
 
-## Résultat actuel (cf. docs/05_backtest_metriques.md)
+## Résultat actuel
 
-La stratégie sous-performe le CAC40 sur la période de test (-4.21% vs +4.60%
-annualisé), pour des raisons diagnostiquées et documentées (pas un bug) : effet
-rebond post-krach inhérent à un détecteur de régime rétrospectif, et écart
-structurel entre un portefeuille stock-picking et un indice pondéré par
-capitalisation.
+Le backtest montre une sous-performance du CAC40 sur la période testée, avec une performance annualisée de -4.21 % contre +4.60 % pour l’indice de référence. Ce résultat est documenté dans [docs/05_backtest_metriques.md](docs/05_backtest_metriques.md).
+
+Les causes identifiées sont notamment :
+
+- effet rebond post-krach inhérent à un détecteur de régime rétrospectif ;
+- écart structurel entre un portefeuille stock-picking et un indice pondéré par capitalisation.
+
+Il ne s’agit donc pas d’un bug, mais d’un diagnostic méthodologique documenté.
+
+## Objectif du dépôt
+
+Ce dépôt sert de base de travail pour un projet académique et de démonstration technique sur :
+
+- la détection de régimes de marché ;
+- la construction d’un portefeuille multi-actifs ;
+- l’évaluation empirique d’une stratégie de rotation de bêta ;
+- la visualisation des résultats via Django et Power BI.
