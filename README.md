@@ -22,6 +22,7 @@ python manage.py entrainer_hmm               # régimes de marché (walk-forward
 python manage.py calculer_betas              # bêta glissant + momentum
 python manage.py calculer_allocations        # allocation probabiliste par régime
 python manage.py lancer_backtest             # simulation + métriques
+python manage.py exporter_powerbi            # export des données en CSV pour Power BI
 python manage.py runserver                   # dashboard sur http://127.0.0.1:8000
 ```
 

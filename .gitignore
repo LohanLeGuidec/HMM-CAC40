@@ -4,7 +4,14 @@ __pycache__/
 *.duckdb
 *.sqlite3
 .env
-data/*.duckdb
+.env.*
+.pytest_cache/
+.mypy_cache/
+coverage.xml
+htmlcov/
 staticfiles/
 node_modules/
 *.log
+HMM-CAC40/
+data/*.duckdb
+data/powerbi/
