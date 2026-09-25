@@ -1,18 +1,52 @@
 {% extends "dashboard/base.html" %}
+{% load percentage %}
 {% block titre %}Performance — Stratégie HMM CAC40{% endblock %}
 {% block contenu %}
-<h1 class="text-3xl font-bold text-white mb-6">Performance : stratégie vs CAC40</h1>
+<h1 class="text-3xl font-bold text-white mb-2">Performance : stratégie vs CAC40</h1>
+<p class="text-sm text-slate-400 mb-6">Stratégie retenue : <span style="color:#34d399;font-weight:600">{{ nom_mode }}</span> — période de test, valorisation sans dividendes (même base que le CAC40).</p>
 
 {% if a_des_donnees %}
+<style>
+    .perf-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+    .perf-table th { text-align: right; font-weight: 500; color: #94a3b8; padding: 6px 8px; border-bottom: 1px solid #334155; font-size: 12px; }
+    .perf-table th:first-child, .perf-table td:first-child { text-align: left; }
+    .perf-table td { text-align: right; color: #e2e8f0; padding: 7px 8px; border-bottom: 1px solid #1e293b; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .perf-table tr.retenu td { background: rgba(52, 211, 153, 0.08); font-weight: 600; }
+    .perf-trait { display: inline-block; width: 16px; height: 0; border-top: 3px solid; margin-right: 8px; vertical-align: middle; }
+</style>
+
 <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 mb-6">
-    <canvas id="graphique-performance" height="90"></canvas>
+    {# Conteneur à hauteur fixe : indispensable avec maintainAspectRatio: false #}
+    <div style="position: relative; height: 420px; width: 100%;">
+        <canvas id="graphique-performance"></canvas>
+    </div>
+    <p class="text-xs text-slate-500 mt-2">Valeur d'un portefeuille de 1 000 000 € investi au début de la période de test. Mêmes paniers d'actions (terciles de bêta), mêmes frais ; seule change la façon de répartir le portefeuille entre les paniers selon les régimes du HMM.</p>
+</div>
+
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-4 mb-6" style="overflow-x:auto">
+    <h2 class="font-semibold text-white mb-3">Comparaison des stratégies</h2>
+    <table class="perf-table">
+        <thead><tr><th>Stratégie</th><th>Capital final</th><th>Rendement annualisé</th><th>Volatilité</th><th>Sharpe</th><th>Max drawdown</th></tr></thead>
+        <tbody>
+        {% for s in strategies %}
+            <tr class="{% if s.retenu %}retenu{% endif %}">
+                <td><span class="perf-trait" style="border-color:{{ s.couleur }}{% if s.pointille %};border-top-style:dashed{% endif %}"></span>{{ s.nom }}</td>
+                <td>{{ s.capital|floatformat:0 }} €</td>
+                <td>{{ s.rendement|percentage|floatformat:2 }} %</td>
+                <td>{{ s.volatilite|percentage|floatformat:1 }} %</td>
+                <td>{{ s.sharpe|floatformat:2 }}</td>
+                <td>{{ s.max_drawdown|percentage|floatformat:1 }} %</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
 </div>
 
 {% if backtest %}
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
     <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
         <p class="text-xs text-slate-400 uppercase">Volatilité annualisée</p>
-        <p class="text-lg font-bold text-white">{{ backtest.volatilite_portefeuille|floatformat:2 }} %</p>
+        <p class="text-lg font-bold text-white">{{ backtest.volatilite_portefeuille|percentage|floatformat:2 }} %</p>
     </div>
     <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
         <p class="text-xs text-slate-400 uppercase">Sortino</p>
@@ -24,7 +58,7 @@
     </div>
     <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
         <p class="text-xs text-slate-400 uppercase">VaR 95% (quotidien)</p>
-        <p class="text-lg font-bold text-white">{{ backtest.var_95_portefeuille|floatformat:2 }} %</p>
+        <p class="text-lg font-bold text-white">{{ backtest.var_95_portefeuille|percentage|floatformat:2 }} %</p>
     </div>
 </div>
 {% endif %}
@@ -32,34 +66,44 @@
 <script>
     Chart.defaults.color = '#94a3b8';
     Chart.defaults.borderColor = '#334155';
-    const ctx = document.getElementById('graphique-performance');
-    new Chart(ctx, {
+    const series = {{ series_json|safe }};
+    new Chart(document.getElementById('graphique-performance'), {
         type: 'line',
         data: {
             labels: {{ labels_json|safe }},
-            datasets: [
-                {
-                    label: 'Stratégie HMM',
-                    data: {{ portefeuille_json|safe }},
-                    borderColor: '#34d399',
-                    backgroundColor: 'transparent',
-                    pointRadius: 0,
-                    borderWidth: 2,
-                },
-                {
-                    label: 'CAC40 (buy & hold)',
-                    data: {{ benchmark_json|safe }},
-                    borderColor: '#94a3b8',
-                    backgroundColor: 'transparent',
-                    pointRadius: 0,
-                    borderWidth: 2,
-                },
-            ],
+            datasets: series.map((s) => ({
+                label: s.nom,
+                data: s.valeurs,
+                borderColor: s.couleur,
+                backgroundColor: 'transparent',
+                borderWidth: s.retenu ? 2.5 : 1.5,
+                borderDash: s.pointille ? [6, 4] : [],
+                pointRadius: 0,
+                tension: 0,
+                order: s.retenu ? 0 : 1,
+            })),
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
             interaction: { mode: 'index', intersect: false },
-            scales: { x: { ticks: { maxTicksLimit: 12 } } },
+            scales: {
+                x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { color: 'rgba(148,163,184,0.08)' } },
+                y: {
+                    title: { display: true, text: 'Valeur du portefeuille (€)' },
+                    grid: { color: 'rgba(148,163,184,0.08)' },
+                    ticks: { callback: (v) => `${(v / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} M€` },
+                },
+            },
+            plugins: {
+                legend: { position: 'top', labels: { color: '#e2e8f0', usePointStyle: true, pointStyle: 'line', padding: 16 } },
+                tooltip: {
+                    callbacks: {
+                        label: (c) => `${c.dataset.label} : ${Math.round(c.parsed.y).toLocaleString('fr-FR')} €`,
+                    },
+                },
+            },
         },
     });
 </script>

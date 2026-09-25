@@ -12,7 +12,7 @@
 ## Phase 1 — Données
 
 - [x] Constituer la liste des 40 tickers Yahoo Finance du CAC40 actuel (validée, [config/univers_cac40.csv](../config/univers_cac40.csv)).
-- [x] Écrire le script/commande d'import Yahoo Finance → DuckDB (10 ans, daily, Adjusted Close) : `python manage.py import_donnees_marche`.
+- [x] Écrire le script/commande d'import Yahoo Finance → DuckDB (depuis 2000, daily, Adjusted Close) : `python manage.py import_donnees_marche`.
 - [x] Spread de taux France - Allemagne via FRED (`IRLTLT01FRM156N` / `IRLTLT01DEM156N`), stocké dans DuckDB.
 - [x] Nettoyage des données (forward-fill limité à 2 jours, exclusion si > 5 % de valeurs manquantes).
 - [x] Import exécuté avec succès : 39 actions + benchmark `^FCHI` importés (2558 jours), **URW.PA exclu automatiquement** (66 % de valeurs manquantes — restructuration de la cotation Unibail-Rodamco-Westfield en 2023, à documenter comme limite connue).
@@ -29,7 +29,7 @@
 ## Phase 3 — Bêta et allocation
 
 - [x] Calcul du bêta glissant 252 jours (recalcul hebdomadaire, dernier jour de bourse de la semaine) : [apps/portfolio/services/beta_calculator.py](../apps/portfolio/services/beta_calculator.py), commande `python manage.py calculer_betas`.
-- [x] Test de l'ajustement de Blume : `python manage.py comparer_ajustement_beta` → Blume réduit le turnover de ~13 % (1681 vs 1940 sur 471 semaines) pour une taille de panier quasi identique. **Blume retenu** (`settings.UTILISER_BLUME = True`).
+- [x] Test de l'ajustement de Blume : comparaison bêta brut / ajusté → Blume réduit le turnover de ~13 % (1681 vs 1940 sur 471 semaines) pour une taille de panier quasi identique. **Blume retenu** (`settings.UTILISER_BLUME = True`).
 - [x] Implémentation des seuils, paniers et zone tampon anti-churn : [apps/portfolio/services/allocation.py](../apps/portfolio/services/allocation.py), [apps/portfolio/services/simulateur_allocation.py](../apps/portfolio/services/simulateur_allocation.py).
 - [x] Historique des allocations hebdomadaires calculé et persisté : `python manage.py calculer_allocations` → 471 semaines, régimes neutre (207) / haussier (182) / baissier (82).
 

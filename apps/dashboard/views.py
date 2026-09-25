@@ -8,20 +8,23 @@ from django.contrib import messages
 from django.core.management import call_command
 from django.shortcuts import redirect, render
 
+from apps.dashboard.evenements import EVENEMENTS_MARCHE
 from apps.market_data.services import duckdb_store
 from apps.portfolio.models import ExecutionAllocation, ExecutionBacktest, ExecutionCalculBeta
-from apps.portfolio.services import allocations_store, beta_store, valeur_store
+from apps.portfolio.services import allocation_probabiliste, allocations_store, beta_store, metriques, valeur_store
+from apps.portfolio.services.allocation import seuils_beta
 from apps.regimes.models import EntrainementHMM
 from apps.regimes.services import regimes_store
 
 
-def _classer_beta(beta: float) -> str:
-    """Reproduit les seuils de docs/04_beta_allocation.md pour l'affichage."""
-    if beta < settings.BETA_SEUIL_DEFENSIF:
+def _classer_beta(beta: float, seuils: tuple) -> str:
+    """Classe un bêta avec les seuils utilisés par l'allocation (fixes ou quantiles du jour)."""
+    seuil_defensif, seuil_neutre_bas, seuil_neutre_haut, seuil_offensif = seuils
+    if beta < seuil_defensif:
         return "défensif"
-    if settings.BETA_SEUIL_NEUTRE_BAS <= beta <= settings.BETA_SEUIL_NEUTRE_HAUT:
+    if seuil_neutre_bas <= beta <= seuil_neutre_haut:
         return "neutre"
-    if beta > settings.BETA_SEUIL_OFFENSIF:
+    if beta > seuil_offensif:
         return "offensif"
     return "zone grise"
 
@@ -33,6 +36,7 @@ def accueil(request):
     dernier_entrainement_hmm = EntrainementHMM.objects.order_by("-date_execution").first()
     contexte = {
         "backtest": dernier_backtest,
+        "nom_mode": allocation_probabiliste.NOMS_MODES.get(settings.ALLOCATION_MODE, settings.ALLOCATION_MODE),
         "calcul_beta": dernier_calcul_beta,
         "allocation": derniere_allocation,
         "entrainement_hmm": dernier_entrainement_hmm,
@@ -40,29 +44,82 @@ def accueil(request):
     return render(request, "dashboard/accueil.html", contexte)
 
 
+# Couleurs des courbes de la page Performance (stratégie retenue en vert, CAC40 en gris)
+COULEURS_STRATEGIES = {"rebond": "#34d399", "suiveur": "#f59e0b", "equipondere": "#60a5fa"}
+
+
 def performance(request):
     con = duckdb_store.obtenir_connexion(settings.DUCKDB_PATH)
     valeurs = valeur_store.lire_valeurs(con)
+    comparaisons = valeur_store.lire_comparaisons(con)
     con.close()
 
+    backtest = ExecutionBacktest.objects.first()
     contexte = {
-        "backtest": ExecutionBacktest.objects.first(),
+        "backtest": backtest,
         "a_des_donnees": not valeurs.empty,
+        "nom_mode": allocation_probabiliste.NOMS_MODES.get(settings.ALLOCATION_MODE, settings.ALLOCATION_MODE),
     }
-    if not valeurs.empty:
-        contexte.update(
-            {
-                "labels_json": json.dumps(valeurs["date"].astype(str).tolist()),
-                "portefeuille_json": json.dumps(valeurs["valeur_portefeuille"].round(2).tolist()),
-                "benchmark_json": json.dumps(valeurs["valeur_benchmark"].round(2).tolist()),
-            }
-        )
+    if valeurs.empty:
+        return render(request, "dashboard/performance.html", contexte)
+
+    valeurs["date"] = pd.to_datetime(valeurs["date"])
+    dates = valeurs["date"]
+    taux = backtest.taux_sans_risque_moyen if backtest else 0.0
+    courbes = {settings.ALLOCATION_MODE: valeurs.set_index("date")["valeur_portefeuille"]}
+    if not comparaisons.empty:
+        comparaisons["date"] = pd.to_datetime(comparaisons["date"])
+        for mode, groupe in comparaisons.groupby("strategie"):
+            courbes.setdefault(mode, groupe.set_index("date")["valeur"])
+
+    strategies = []
+    for mode in [settings.ALLOCATION_MODE] + [m for m in allocation_probabiliste.MODES if m != settings.ALLOCATION_MODE]:
+        if mode not in courbes:
+            continue
+        serie = courbes[mode].reindex(dates).ffill()
+        strategies.append({
+            "nom": allocation_probabiliste.NOMS_MODES[mode], "serie": serie, "couleur": COULEURS_STRATEGIES.get(mode, "#e2e8f0"),
+            "retenu": mode == settings.ALLOCATION_MODE, "pointille": False,
+        })
+    strategies.append({
+        "nom": "CAC40 (achat-conservation)", "serie": valeurs.set_index("date")["valeur_benchmark"],
+        "couleur": "#94a3b8", "retenu": False, "pointille": True,
+    })
+    for s in strategies:
+        m = metriques.calculer_toutes_les_metriques(s["serie"], taux)
+        s.update({
+            "capital": float(s["serie"].iloc[-1]), "rendement": m["rendement_annualise"],
+            "volatilite": m["volatilite_annualisee"], "sharpe": m["sharpe"], "max_drawdown": m["max_drawdown"],
+        })
+
+    contexte.update({
+        "labels_json": json.dumps(dates.dt.strftime("%Y-%m-%d").tolist()),
+        "series_json": json.dumps([
+            {"nom": s["nom"], "valeurs": s["serie"].round(0).tolist(), "couleur": s["couleur"],
+             "retenu": s["retenu"], "pointille": s["pointille"]}
+            for s in strategies
+        ]),
+        "strategies": [{k: v for k, v in s.items() if k != "serie"} for s in strategies],
+    })
     return render(request, "dashboard/performance.html", contexte)
 
 
 def regimes(request):
     con = duckdb_store.obtenir_connexion(settings.DUCKDB_PATH)
     regimes_df = regimes_store.lire_regimes(con)
+
+    if regimes_df.empty:
+        try:
+            call_command("import_donnees_marche")
+            call_command("entrainer_hmm")
+        except Exception:
+            con.close()
+            return render(request, "dashboard/regimes.html", {"a_des_donnees": False})
+
+        con.close()
+        con = duckdb_store.obtenir_connexion(settings.DUCKDB_PATH)
+        regimes_df = regimes_store.lire_regimes(con)
+
     prix_benchmark = con.execute(
         "SELECT date, adj_close FROM prix_ohlcv WHERE ticker = ? ORDER BY date", [settings.TICKER_BENCHMARK]
     ).fetchdf()
@@ -72,24 +129,46 @@ def regimes(request):
     if regimes_df.empty:
         return render(request, "dashboard/regimes.html", contexte)
 
-    fusion = prix_benchmark.merge(regimes_df[["date", "regime", "ensemble"]], on="date", how="inner")
+    # Dates normalisées des deux côtés (DuckDB renvoie des datetime64).
+    prix_benchmark["date"] = pd.to_datetime(prix_benchmark["date"]).dt.normalize()
+    regimes_df["date"] = pd.to_datetime(regimes_df["date"]).dt.normalize()
+    colonnes_probas = [c for c in ("proba_haussier", "proba_neutre", "proba_baissier") if c in regimes_df.columns]
+    fusion = prix_benchmark.merge(regimes_df[["date", "regime", "ensemble", *colonnes_probas]], on="date", how="inner")
+    fusion = fusion.dropna(subset=["adj_close"])
+    regime_labels = fusion["regime"].astype(str).tolist()
 
-    series_par_regime = {}
-    for label in ["haussier", "neutre", "baissier"]:
-        serie = fusion["adj_close"].where(fusion["regime"] == label)
-        series_par_regime[label] = json.dumps([None if pd.isna(v) else round(v, 2) for v in serie])
+    prix_cac40 = fusion["adj_close"].round(2).tolist()
+    couleurs_regimes = []
+    for regime in fusion["regime"].astype(str):
+        if regime == "haussier":
+            couleurs_regimes.append("#34d399")
+        elif regime == "neutre":
+            couleurs_regimes.append("#fbbf24")
+        else:
+            couleurs_regimes.append("#f87171")
 
-    repartition = (
-        regimes_df.groupby(["ensemble", "regime"]).size().reset_index(name="nb_jours").to_dict("records")
-    )
-
+    train_end_date = regimes_df[regimes_df["ensemble"] == "train"]["date"].max()
     contexte.update(
         {
-            "labels_json": json.dumps(fusion["date"].astype(str).tolist()),
-            "serie_haussier_json": series_par_regime["haussier"],
-            "serie_neutre_json": series_par_regime["neutre"],
-            "serie_baissier_json": series_par_regime["baissier"],
-            "repartition": repartition,
+            "labels_json": json.dumps(fusion["date"].dt.strftime("%Y-%m-%d").tolist()),
+            "regime_labels_json": json.dumps(regime_labels),
+            # Probabilités filtrées du HMM (confiance du modèle), arrondies pour alléger la page
+            "probas_json": json.dumps(
+                {c.replace("proba_", ""): fusion[c].round(3).fillna(0).tolist() for c in colonnes_probas}
+            ),
+            "prix_json": json.dumps(prix_cac40),
+            "regime_colors_json": json.dumps(couleurs_regimes),
+            # str(Timestamp) donnait "2023-09-13 00:00:00" -> jamais trouvé dans les labels.
+            "train_end_date": json.dumps(train_end_date.strftime("%Y-%m-%d")) if pd.notna(train_end_date) else "null",
+            "evenements_json": json.dumps(EVENEMENTS_MARCHE, ensure_ascii=False),
+            "allocation_json": json.dumps({
+                "mode": settings.ALLOCATION_MODE,
+                "nom": allocation_probabiliste.NOMS_MODES.get(settings.ALLOCATION_MODE, settings.ALLOCATION_MODE),
+                "panier_par_regime": {
+                    regime: allocation_probabiliste.NOMS_PANIERS[panier]
+                    for regime, panier in allocation_probabiliste.PANIER_PAR_REGIME.get(settings.ALLOCATION_MODE, {}).items()
+                },
+            }, ensure_ascii=False),
         }
     )
     return render(request, "dashboard/regimes.html", contexte)
@@ -107,6 +186,7 @@ def betas(request):
     derniere_date = betas_df["date"].max()
     derniers = betas_df[betas_df["date"] == derniere_date].sort_values("beta_ajuste", ascending=False)
 
+    seuils = seuils_beta(derniers["beta_ajuste"])
     univers = pd.read_csv(settings.UNIVERS_CAC40_CSV).set_index("ticker")
     lignes = []
     for _, ligne in derniers.iterrows():
@@ -119,7 +199,7 @@ def betas(request):
                 "beta_brut": round(ligne["beta_brut"], 3),
                 "beta_ajuste": round(ligne["beta_ajuste"], 3),
                 "momentum_63j": round(ligne["momentum_63j"], 4),
-                "classe": _classer_beta(ligne["beta_ajuste"]),
+                "classe": _classer_beta(ligne["beta_ajuste"], seuils),
             }
         )
 
@@ -159,8 +239,11 @@ def allocations(request):
 def relancer_backtest(request):
     if request.method == "POST":
         try:
+            # Les allocations sont recalculées d'abord : elles dépendent des réglages
+            # (ALLOCATION_MODE, seuils de bêta...) qui ont pu changer depuis le dernier calcul.
+            call_command("calculer_allocations")
             call_command("lancer_backtest")
-            messages.success(request, "Backtest relancé avec succès.")
+            messages.success(request, "Allocations recalculées et backtest relancé avec succès.")
         except Exception as erreur:
             messages.error(request, f"Échec du backtest : {erreur}")
     return redirect("dashboard:accueil")

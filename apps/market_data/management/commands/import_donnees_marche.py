@@ -15,8 +15,21 @@ LIMITE_FORWARD_FILL_JOURS = 2
 SEUIL_EXCLUSION_MANQUANTES = 0.05
 
 
+def taux_manquantes_depuis_cotation(prix_ajustes: pd.Series) -> float:
+    """Part de valeurs manquantes calculée à partir de la première cotation du titre.
+
+    Les jours antérieurs à l'introduction en bourse ne sont pas des "trous" : sans cette
+    règle, un historique depuis 2000 exclurait toute action cotée plus tard (Legrand 2006,
+    Edenred 2010, Worldline 2014...). Retourne 1.0 si le titre n'a aucune cotation.
+    """
+    premiere_cotation = prix_ajustes.first_valid_index()
+    if premiere_cotation is None:
+        return 1.0
+    return float(prix_ajustes.loc[premiere_cotation:].isna().mean())
+
+
 class Command(BaseCommand):
-    help = "Importe l'historique 10 ans (Yahoo Finance) et le spread de taux (FRED) dans DuckDB."
+    help = "Importe l'historique (Yahoo Finance, depuis DATE_DEBUT_HISTORIQUE) et le spread de taux (FRED) dans DuckDB."
 
     def handle(self, *args, **options):
         date_debut = settings.DATE_DEBUT_HISTORIQUE
@@ -73,7 +86,7 @@ class Command(BaseCommand):
         prix_aligne = prix.reindex(calendrier_bourse)
         prix_nettoye = prix_aligne.ffill(limit=LIMITE_FORWARD_FILL_JOURS)
 
-        taux_manquantes = prix_nettoye["adj_close"].isna().mean()
+        taux_manquantes = taux_manquantes_depuis_cotation(prix_nettoye["adj_close"])
 
         if taux_manquantes > SEUIL_EXCLUSION_MANQUANTES:
             self._enregistrer_exclusion(ticker, nom, taux_manquantes)
@@ -100,7 +113,8 @@ class Command(BaseCommand):
                 "message_erreur": "",
             },
         )
-        self.stdout.write(self.style.SUCCESS(f"  {nb_lignes} lignes importées."))
+        premiere_date = prix_final.index.min()
+        self.stdout.write(self.style.SUCCESS(f"  {nb_lignes} lignes importées (depuis le {premiere_date:%Y-%m-%d})."))
 
     def _enregistrer_exclusion(self, ticker, nom, taux_manquantes):
         ImportDonneesMarche.objects.update_or_create(

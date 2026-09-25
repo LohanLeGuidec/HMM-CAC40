@@ -14,7 +14,7 @@
 
 ## 3. Période et fréquence
 
-- **Historique** : 10 ans, **fenêtre figée** du 2016-09-10 au 2026-09-10 (reproductibilité des résultats, indépendante de la date d'exécution future des scripts).
+- **Historique** : ~26 ans, **fenêtre figée** du 2000-01-03 au 2026-09-10 (reproductibilité des résultats, indépendante de la date d'exécution future des scripts). Étendu depuis 10 ans (2016-2026) le 23/09/2026 : avec 10 ans, le train ne contenait qu'un vrai krach (COVID) et le test 3 ans quasi haussiers. Depuis 2000, le train (~2000-2018) couvre la bulle internet, 2008 et la crise de la dette euro ; le test (~2018-2026) couvre fin 2018, le COVID, 2022, la dissolution de 2024 et les tarifs de 2025. 2000 correspond aussi au début de la zone euro, ce qui rend le spread France - Allemagne comparable sur toute la période.
 - **Fréquence** : journalière (OHLCV).
 - **Split** :
   - **Train (70 %)** : entraînement initial du HMM (détection des régimes, estimation des paramètres).
@@ -40,6 +40,7 @@
 
 ## 6. Nettoyage des données
 
-- Gestion des jours fériés / valeurs manquantes : alignement sur le calendrier de bourse Euronext Paris, forward-fill limité (max 2 jours) pour les données manquantes ponctuelles, exclusion des tickers avec trop de trous (> 5 % de valeurs manquantes sur la période).
+- Gestion des jours fériés / valeurs manquantes : alignement sur le calendrier de bourse Euronext Paris, forward-fill limité (max 2 jours) pour les données manquantes ponctuelles, exclusion des tickers avec trop de trous (> 5 % de valeurs manquantes **à partir de leur première cotation** : les jours antérieurs à l'introduction en bourse ne comptent pas comme des trous).
 - Détection et traitement des splits/opérations sur titre (normalement déjà gérés par l'Adjusted Close de Yahoo Finance).
-- Gestion des IPO/retraits récents : une action entrée récemment au CAC40 et n'ayant pas 10 ans d'historique est incluse avec un historique partiel (bêta calculé dès que 252 jours de données sont disponibles).
+- Gestion des IPO/retraits récents : une action cotée après 2000 (ex. Legrand 2006, Edenred 2010, Worldline 2014) est incluse avec un historique partiel : elle n'entre dans le calcul des bêtas et dans l'allocation qu'une fois 252 jours de données disponibles. Les dates de rééquilibrage sont tirées du calendrier du CAC40, pas de celui d'une action.
+- **Biais de survivance accru** : sur 26 ans, l'univers (composition actuelle du CAC40) ignore les sociétés sorties de l'indice (Alcatel, Lafarge, Vivendi...). La détection des régimes n'est pas concernée (elle n'utilise que l'indice), mais la performance des paniers d'actions est surestimée. Limite à mentionner explicitement dans le rapport.

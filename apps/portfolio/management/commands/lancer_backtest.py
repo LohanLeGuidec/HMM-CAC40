@@ -8,7 +8,17 @@ from django.core.management.base import BaseCommand
 
 from apps.market_data.services import duckdb_store
 from apps.portfolio.models import ExecutionBacktest
-from apps.portfolio.services import backtest_engine, metriques, transactions_store, valeur_store
+import pandas as pd
+
+from apps.portfolio.services import (
+    allocation_probabiliste,
+    backtest_engine,
+    beta_store,
+    metriques,
+    transactions_store,
+    valeur_store,
+)
+from apps.regimes.services import regimes_store
 
 
 class Command(BaseCommand):
@@ -18,6 +28,7 @@ class Command(BaseCommand):
         con = duckdb_store.obtenir_connexion(settings.DUCKDB_PATH)
 
         self.stdout.write("Simulation du backtest (rééquilibrage hebdomadaire, coûts de transaction)...")
+        self._verifier_allocations_a_jour(con)
         valeurs, transactions = backtest_engine.simuler_backtest(con)
 
         taux_sans_risque = con.execute(
@@ -27,6 +38,8 @@ class Command(BaseCommand):
 
         nb_lignes_valeurs = valeur_store.enregistrer_valeurs(con, valeurs)
         nb_lignes_transactions = transactions_store.enregistrer_transactions(con, transactions)
+        comparaisons = self._simuler_comparaisons(con, valeurs, taux_sans_risque)
+        valeur_store.enregistrer_comparaisons(con, comparaisons)
         con.close()
 
         metriques_portefeuille = metriques.calculer_toutes_les_metriques(
@@ -87,3 +100,51 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("\n=== Comparaison ==="))
         self.stdout.write(f"  Alpha annualisé vs CAC40 : {alpha:.2%}")
         self.stdout.write(f"  Bêta du portefeuille     : {beta:.2f}")
+
+
+    def _simuler_comparaisons(self, con, valeurs, taux_sans_risque) -> pd.DataFrame:
+        """Rejoue les autres modes d'allocation sur les mêmes dates (mêmes paniers, mêmes
+        garde-fous) pour comparer la stratégie retenue. Rien n'est persisté hormis les valeurs."""
+        betas = beta_store.lire_betas(con)
+        regimes = regimes_store.lire_regimes(con)
+        dates_test = set(pd.to_datetime(regimes.loc[regimes["ensemble"] == "test", "date"]))
+        lignes = []
+        self.stdout.write(self.style.SUCCESS("\n=== Comparaison des modes d'allocation (même période) ==="))
+        for mode in allocation_probabiliste.MODES:
+            if mode == settings.ALLOCATION_MODE:
+                serie = valeurs["valeur_portefeuille"]
+            else:
+                allocations = allocation_probabiliste.construire_allocations(betas, regimes, mode=mode)
+                allocations = allocations[pd.to_datetime(allocations["date"]).isin(dates_test)]
+                serie = backtest_engine.simuler_backtest(con, allocations)[0]["valeur_portefeuille"]
+            m = metriques.calculer_toutes_les_metriques(serie, taux_sans_risque)
+            marqueur = "  <- retenu" if mode == settings.ALLOCATION_MODE else ""
+            self.stdout.write(
+                f"  {allocation_probabiliste.NOMS_MODES[mode]:28s} rdt {m['rendement_annualise']:6.2%}  "
+                f"Sharpe {m['sharpe']:5.2f}  MDD {m['max_drawdown']:7.2%}{marqueur}"
+            )
+            lignes.append(pd.DataFrame({"date": serie.index, "strategie": mode, "valeur": serie.to_numpy()}))
+        return pd.concat(lignes, ignore_index=True)
+
+
+    def _verifier_allocations_a_jour(self, con) -> None:
+        """Avertit si les allocations enregistrées ne correspondent plus aux réglages actuels
+        (ex. ALLOCATION_MODE modifié sans relancer calculer_allocations)."""
+        enregistrees = backtest_engine.charger_allocations_test(con)
+        if enregistrees.empty:
+            return
+        attendues = allocation_probabiliste.construire_allocations(
+            beta_store.lire_betas(con), regimes_store.lire_regimes(con)
+        )
+        cle = ["date", "ticker"]
+        for tableau in (enregistrees, attendues):
+            tableau["date"] = pd.to_datetime(tableau["date"])
+        comparaison = enregistrees[cle + ["poids"]].merge(
+            attendues[cle + ["poids"]], on=cle, how="left", suffixes=("", "_attendu")
+        )
+        ecart = (comparaison["poids"] - comparaison["poids_attendu"].fillna(0)).abs().max()
+        if ecart > 1e-6:
+            self.stdout.write(self.style.WARNING(
+                "ATTENTION : les allocations enregistrées ne correspondent pas aux réglages actuels "
+                f"(ALLOCATION_MODE = '{settings.ALLOCATION_MODE}'). Lancez d'abord : python manage.py calculer_allocations"
+            ))

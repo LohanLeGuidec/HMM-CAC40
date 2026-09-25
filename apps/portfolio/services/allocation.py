@@ -8,19 +8,43 @@ récent (cf. diagnostic de sous-performance, Phase 4).
 from django.conf import settings
 
 
+def seuils_beta(betas) -> tuple[float, float, float, float]:
+    """Seuils (défensif, neutre bas, neutre haut, offensif) appliqués aux bêtas d'une date.
+
+    - "fixes" : valeurs de settings (BETA_SEUIL_*), identiques à toutes les dates.
+    - "quantiles" : seuils relatifs recalculés à chaque date. Les BETA_QUANTILE_COUPURE x 100 %
+      d'actions au bêta le plus faible forment le panier défensif, autant au bêta le plus élevé
+      le panier offensif, le reste le panier neutre (pas de zone grise). Chaque panier garde
+      ainsi une taille stable quel que soit le niveau général des bêtas.
+    """
+    if settings.BETA_METHODE_SEUILS == "quantiles":
+        coupure = settings.BETA_QUANTILE_COUPURE
+        bas, haut = betas.quantile(coupure), betas.quantile(1 - coupure)
+        # Défensif : bêta < bas ; offensif : bêta > haut ; neutre : bande [bas, haut] incluse.
+        return bas, bas, haut, haut
+    return (
+        settings.BETA_SEUIL_DEFENSIF,
+        settings.BETA_SEUIL_NEUTRE_BAS,
+        settings.BETA_SEUIL_NEUTRE_HAUT,
+        settings.BETA_SEUIL_OFFENSIF,
+    )
+
+
 def trier_candidats(candidats, regime: str) -> list[str]:
     """Retourne les tickers éligibles au panier du régime, triés du meilleur au moins bon.
 
     candidats : pandas.DataFrame indexé par ticker, colonnes 'beta' et 'momentum'.
     """
+    seuil_defensif, seuil_neutre_bas, seuil_neutre_haut, seuil_offensif = seuils_beta(candidats["beta"])
+
     if regime == "baissier":
-        eligibles = candidats[candidats["beta"] < settings.BETA_SEUIL_DEFENSIF].copy()
+        eligibles = candidats[candidats["beta"] < seuil_defensif].copy()
         rang_beta = eligibles["beta"].rank(ascending=True, pct=True)  # bêta le plus faible = meilleur
     elif regime == "haussier":
-        eligibles = candidats[candidats["beta"] > settings.BETA_SEUIL_OFFENSIF].copy()
+        eligibles = candidats[candidats["beta"] > seuil_offensif].copy()
         rang_beta = eligibles["beta"].rank(ascending=False, pct=True)  # bêta le plus élevé = meilleur
     else:
-        dans_la_bande = candidats["beta"].between(settings.BETA_SEUIL_NEUTRE_BAS, settings.BETA_SEUIL_NEUTRE_HAUT)
+        dans_la_bande = candidats["beta"].between(seuil_neutre_bas, seuil_neutre_haut)
         eligibles = candidats[dans_la_bande].copy()
         rang_beta = (eligibles["beta"] - 1).abs().rank(ascending=True, pct=True)  # le plus proche de 1 = meilleur
 

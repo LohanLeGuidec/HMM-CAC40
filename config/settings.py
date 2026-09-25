@@ -133,8 +133,11 @@ DATA_DIR = BASE_DIR / 'data'
 DUCKDB_PATH = DATA_DIR / 'marche.duckdb'
 UNIVERS_CAC40_CSV = BASE_DIR / 'config' / 'univers_cac40.csv'
 
-# Fenêtre historique figée (reproductibilité, cf. docs/02_donnees_marche.md)
-DATE_DEBUT_HISTORIQUE = '2016-09-10'
+# Fenêtre historique figée (reproductibilité, cf. docs/02_donnees_marche.md).
+# Depuis 2000 (début de la zone euro) : le train (70 %, ~2000-2018) contient plusieurs vrais
+# marchés baissiers (bulle internet, 2008, dette euro 2011) et le test (30 %, ~2018-2026)
+# couvre fin 2018, COVID, 2022, 2024 et 2025, au lieu de 3 ans quasi haussiers.
+DATE_DEBUT_HISTORIQUE = '2000-01-03'
 DATE_FIN_HISTORIQUE = '2026-09-10'
 TICKER_BENCHMARK = '^FCHI'
 
@@ -146,14 +149,30 @@ FRED_SERIE_TAUX_SANS_RISQUE = 'IR3TIB01FRM156N'
 
 # Paramètres du modèle HMM de détection de régimes (cf. docs/03_modele_hmm.md)
 HMM_NB_ETATS = 3
-HMM_FENETRE_VOLATILITE_JOURS = 20
+HMM_FENETRE_VOLATILITE_JOURS = 10
+# Variables de tendance (rendement log cumulé) : elles portent la direction du marché,
+# contrairement au rendement quotidien, trop bruité pour séparer hausse et baisse.
+# Fenêtres courtes (20 j / 5 j) : avec 60 j, le régime restait "haussier" pendant les
+# baisses qui suivaient une hausse (et inversement). Choisies sur le train uniquement :
+# accord avec la direction centrée du marché 62 % (contre 52 % avec 60 j / 20 j).
+HMM_FENETRE_TENDANCE_COURTE_JOURS = 5
+HMM_FENETRE_TENDANCE_LONGUE_JOURS = 20
+# Spread France - Allemagne : utilisé en VARIATION (le niveau est non stationnaire) et
+# décalé d'un mois (la moyenne mensuelle FRED du mois M n'est connue qu'en M + 1).
+HMM_UTILISER_SPREAD = True
+HMM_SPREAD_DECALAGE_MOIS = 1
+HMM_SPREAD_VARIATION_JOURS = 63
+# Nombre d'initialisations aléatoires de l'EM (on garde la meilleure log-vraisemblance)
+HMM_NB_INITIALISATIONS = 5
 HMM_FREQUENCE_REENTRAINEMENT_JOURS = 63
 SPLIT_TRAIN_RATIO = 0.7
 # Prior de transition "collant" (favorise la persistance d'état, réduit le whipsaw)
 HMM_TRANSMAT_PRIOR_DIAGONAL = 20.0
 # Filtre de persistance causal : un changement de régime n'est confirmé que s'il
-# persiste au moins ce nombre de jours de bourse consécutifs (cf. docs/03_modele_hmm.md)
-HMM_PERSISTANCE_MIN_JOURS = 5
+# persiste au moins ce nombre de jours de bourse consécutifs (cf. docs/03_modele_hmm.md).
+# 1 = désactivé : le filtre ajoutait autant de jours de retard aux retournements ;
+# la persistance est déjà assurée par le prior de transition collant.
+HMM_PERSISTANCE_MIN_JOURS = 1
 
 # Paramètres du bêta et de l'allocation (cf. docs/04_beta_allocation.md)
 BETA_FENETRE_JOURS = 252
@@ -161,9 +180,31 @@ BETA_SEUIL_DEFENSIF = 0.8
 BETA_SEUIL_NEUTRE_BAS = 0.9
 BETA_SEUIL_NEUTRE_HAUT = 1.1
 BETA_SEUIL_OFFENSIF = 1.2
+# Méthode de constitution des paniers : "fixes" (seuils BETA_SEUIL_* ci-dessus) ou
+# "quantiles" (seuils relatifs recalculés à chaque date, cf. apps/portfolio/services/allocation.py)
+# Décision du 24/09/2026 (cf. docs/04, section 2 bis) : terciles (coupure 33 %).
+# - Analyse ROC sur le train (2000-2018) : le bêta ne prédit pas la surperformance du mois
+#   suivant (AUC ~0,50 dans chaque régime), donc aucun seuil "optimal" au sens de Youden.
+# - Backtest sur le train : les quantiles battent les seuils fixes pour toute coupure de 20 à
+#   40 % (Sharpe 0,15-0,24 contre 0,03), plateau entre 30 et 40 % ; 33 % = terciles, choix
+#   standard au milieu du plateau. Gain confirmé sur les deux moitiés du train, et sans
+#   dividendes (25/09/2026 : train 3,6 %/an contre 0,5 % avec les seuils fixes).
+BETA_METHODE_SEUILS = 'quantiles'
+BETA_QUANTILE_COUPURE = 0.33
+# Répartition entre les 3 paniers selon les régimes du HMM (cf. allocation_probabiliste.py) :
+# "rebond" (retour à la moyenne : baissier -> offensif, haussier -> défensif), "suiveur"
+# (haussier -> offensif, baissier -> défensif) ou "equipondere" (1/3 par panier, sans HMM).
+ALLOCATION_MODE = 'rebond'
+# Garde-fous : probabilités moyennées sur N jours de bourse, plafond du panier offensif.
+# Calibrés sur le train (2000-2018) : Sharpe stable (0,21-0,23) pour toutes les combinaisons
+# testées (lissage 1/5/10/21 j x plafond 100/80/60 %) ; 10 j / 80 % = milieu du plateau,
+# -22 % de coûts et drawdown réduit pour ~97 % du rendement. Test 2018-2026 : 8,5 %/an,
+# Sharpe 0,39, MDD -38 % (CAC40 : 6,1 %, 0,26, -39 %).
+ALLOCATION_LISSAGE_JOURS = 10
+ALLOCATION_PLAFOND_OFFENSIF = 0.8
 PANIER_TAILLE_CIBLE = 10
 PANIER_TAILLE_BUFFER = 15
-# Décidé après comparaison empirique (cf. python manage.py comparer_ajustement_beta) :
+# Décidé après comparaison empirique (bêta brut vs ajusté, Phase 3) :
 # Blume réduit le turnover de ~13% (1681 vs 1940 sur 471 semaines) pour une taille de
 # panier moyenne quasi identique (9.11 vs 9.67).
 UTILISER_BLUME = True
@@ -176,14 +217,14 @@ FREQUENCE_REEQUILIBRAGE = 'mensuel'
 MOMENTUM_FENETRE_JOURS = 63
 POIDS_SCORE_BETA = 0.6
 POIDS_SCORE_MOMENTUM = 0.4
-# Atténuation du biais défensif en régime baissier : les creux de marché sont souvent
-# suivis d'un rebond à court terme (cf. diagnostic Phase 4, docs/05_backtest_metriques.md).
-# Seule cette fraction de la probabilité "baissier" reste allouée au panier défensif ;
-# le reste est réalloué au panier neutre pour capter une partie du rebond.
-ATTENUATION_BAISSIER = 1.0
-
 # Paramètres du backtest (cf. docs/05_backtest_metriques.md)
 CAPITAL_INITIAL = 1_000_000
+# Cours de valorisation du portefeuille : "close" = sans dividendes, même base que le benchmark
+# ^FCHI (indice de prix). "adj_close" (dividendes réinvestis) surestimait la stratégie d'environ
+# 3 %/an et intégrait des sauts erronés de l'Adjusted Close Yahoo (ex. Stellantis +39 % le
+# 14/01/2021, AXA ~+10 % chaque mois de mai 2003-2008). Les bêtas et le momentum restent
+# calculés sur l'Adjusted Close (cf. docs/02).
+BACKTEST_COLONNE_PRIX = 'close'
 COUT_TRANSACTION_POURCENT = 0.001
 VAR_NIVEAU_CONFIANCE = 0.95
 

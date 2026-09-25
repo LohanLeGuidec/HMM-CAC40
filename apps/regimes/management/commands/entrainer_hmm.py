@@ -39,6 +39,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Entraînement initial sur {indice_split} observations (train)...")
         modele = hmm_model.entrainer_modele(valeurs_standardisees[:indice_split], settings.HMM_NB_ETATS)
         mapping = hmm_model.etiqueter_etats(modele)
+        # Décodage causal (filtre forward) : le régime du jour t n'utilise que les données <= t.
         labels, probas, log_vraisemblance = hmm_model.decoder_regimes(
             modele, valeurs_standardisees[:indice_split], mapping
         )
@@ -59,6 +60,7 @@ class Command(BaseCommand):
         )
 
         # 2. Walk-forward sur la période test : ré-entraînement périodique (fenêtre expansive)
+        modele_precedent, mapping_precedent = modele, mapping
         frequence = settings.HMM_FREQUENCE_REENTRAINEMENT_JOURS
         for debut_morceau in range(indice_split, n, frequence):
             fin_morceau = min(debut_morceau + frequence, n)
@@ -67,10 +69,13 @@ class Command(BaseCommand):
                 f"application du {dates[debut_morceau].date()} au {dates[fin_morceau - 1].date()}..."
             )
             modele = hmm_model.entrainer_modele(valeurs_standardisees[:debut_morceau], settings.HMM_NB_ETATS)
-            mapping = hmm_model.etiqueter_etats(modele)
-            # Décodage sur tout l'historique disponible (et non la seule tranche courante) :
-            # Viterbi a ainsi le contexte passé complet, ce qui évite les oscillations de
-            # régime artificielles qu'un décodage de tranche isolée peut produire.
+            # Les états du nouveau modèle héritent des labels des états les plus proches du
+            # modèle précédent : "haussier" garde le même sens d'un ré-entraînement à l'autre.
+            mapping = hmm_model.aligner_sur_modele_precedent(modele, modele_precedent, mapping_precedent)
+            modele_precedent, mapping_precedent = modele, mapping
+            # Filtre forward sur tout l'historique disponible jusqu'à la fin de la tranche :
+            # causal, donc le label du jour t ne dépend que des observations <= t (aucune
+            # donnée de la suite de la tranche n'est utilisée, contrairement à Viterbi).
             labels_complets, probas_completes, log_vraisemblance = hmm_model.decoder_regimes(
                 modele, valeurs_standardisees[:fin_morceau], mapping
             )

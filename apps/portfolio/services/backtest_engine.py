@@ -25,22 +25,39 @@ def charger_allocations_test(con) -> pd.DataFrame:
 
 
 def charger_prix_quotidiens(con, tickers: list[str], date_debut) -> pd.DataFrame:
-    """Charge l'Adjusted Close journalier de tous les tickers utiles, en colonnes (pivot)."""
+    """Charge le cours journalier de valorisation de tous les tickers utiles, en colonnes (pivot).
+
+    Colonne utilisée : settings.BACKTEST_COLONNE_PRIX ("close" par défaut). Le Close Yahoo est
+    corrigé des divisions d'actions mais PAS des dividendes : c'est la même base que le
+    benchmark ^FCHI (indice de prix, sans dividendes). Valoriser avec l'Adjusted Close
+    (dividendes réinvestis) avantageait la stratégie d'environ 3 %/an face au CAC40.
+    """
+    colonne = settings.BACKTEST_COLONNE_PRIX
+    if colonne not in ("close", "adj_close"):
+        raise ValueError(f"BACKTEST_COLONNE_PRIX invalide : {colonne}")
     marqueurs = ",".join(["?"] * len(tickers))
     donnees = con.execute(
-        f"SELECT date, ticker, adj_close FROM prix_ohlcv WHERE ticker IN ({marqueurs}) AND date >= ? ORDER BY date",
+        f"SELECT date, ticker, {colonne} AS prix FROM prix_ohlcv WHERE ticker IN ({marqueurs}) AND date >= ? ORDER BY date",
         [*tickers, date_debut],
     ).fetchdf()
-    return donnees.pivot(index="date", columns="ticker", values="adj_close").sort_index()
+    prix = donnees.pivot(index="date", columns="ticker", values="prix").sort_index()
+    # Un trou ponctuel de cotation (> 2 jours, non comblé à l'import) rendrait la valeur du
+    # portefeuille NaN : on valorise au dernier prix connu (jamais de prix futur).
+    return prix.ffill()
 
 
 def _valeur_positions(positions: dict, prix_du_jour: pd.Series) -> float:
     return sum(quantite * prix_du_jour[ticker] for ticker, quantite in positions.items())
 
 
-def simuler_backtest(con) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Rejoue le backtest complet. Retourne (valeurs_journalieres, transactions)."""
-    allocations = charger_allocations_test(con)
+def simuler_backtest(con, allocations: pd.DataFrame | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Rejoue le backtest complet. Retourne (valeurs_journalieres, transactions).
+
+    allocations : par défaut, les allocations de test enregistrées en base ; on peut fournir
+    un autre jeu (date, ticker, poids) pour comparer des variantes sans rien persister.
+    """
+    if allocations is None:
+        allocations = charger_allocations_test(con)
     if allocations.empty:
         raise ValueError("Aucune allocation de test disponible : lancez calculer_allocations au préalable.")
 

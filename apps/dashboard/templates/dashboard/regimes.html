@@ -4,53 +4,653 @@
 <h1 class="text-3xl font-bold text-white mb-6">Régimes de marché détectés (HMM)</h1>
 
 {% if a_des_donnees %}
+{# Styles des contrôles de zoom en CSS local : ils ne dépendent pas du build Tailwind. #}
+<style>
+    .zoom-barre { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; }
+    .zoom-groupe { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .zoom-bouton { background: #0f172a; color: #cbd5e1; border: 1px solid #334155; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+    .zoom-bouton:hover { border-color: #34d399; color: #34d399; }
+    .zoom-bouton.actif { background: #34d399; border-color: #34d399; color: #0f172a; font-weight: 600; }
+    .zoom-champ { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 3px 6px; font-size: 12px; color-scheme: dark; }
+    .zoom-separateur { width: 1px; height: 22px; background: #334155; margin: 0 4px; }
+    .zoom-selection { position: absolute; top: 0; bottom: 0; background: rgba(52, 211, 153, 0.15); border-left: 1px solid #34d399; border-right: 1px solid #34d399; pointer-events: none; display: none; }
+    .zoom-stats { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: #94a3b8; margin-top: 8px; }
+    .zoom-stats strong { color: #e2e8f0; font-weight: 600; }
+    #graphique-regimes { cursor: crosshair; }
+    .choc-infobulle { position: absolute; z-index: 5; max-width: 280px; background: rgba(2, 6, 23, 0.95); border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; font-size: 12px; color: #cbd5e1; pointer-events: none; display: none; }
+    .choc-infobulle strong { display: block; color: #f8fafc; margin-bottom: 2px; }
+    .chocs-liste { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .choc-puce { display: inline-flex; align-items: center; gap: 6px; background: #0f172a; border: 1px solid #334155; border-radius: 9999px; padding: 3px 10px; font-size: 11px; color: #cbd5e1; cursor: pointer; }
+    .choc-puce:hover { border-color: #e2e8f0; color: #f8fafc; }
+    .choc-puce .pastille { width: 8px; height: 8px; border-radius: 9999px; display: inline-block; }
+    .choc-puce .date { color: #64748b; }
+</style>
+
 <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 mb-6">
-    <canvas id="graphique-regimes" height="90"></canvas>
-    <p class="text-xs text-slate-500 mt-2">Chaque couleur représente le régime détecté par le HMM ce jour-là (superposé au cours du CAC40).</p>
+    <div class="zoom-barre">
+        <div class="zoom-groupe" id="zoom-presets">
+            <button type="button" class="zoom-bouton actif" data-preset="tout">Tout</button>
+            <button type="button" class="zoom-bouton" data-preset="train">Train</button>
+            <button type="button" class="zoom-bouton" data-preset="test">Test</button>
+            <button type="button" class="zoom-bouton" data-preset="5a">5 ans</button>
+            <button type="button" class="zoom-bouton" data-preset="1a">1 an</button>
+            <button type="button" class="zoom-bouton" data-preset="6m">6 mois</button>
+        </div>
+        <span class="zoom-separateur"></span>
+        <label class="zoom-groupe" style="color:#94a3b8">Épisode
+            <select id="zoom-episode" class="zoom-champ"><option value="">—</option></select>
+        </label>
+        <span class="zoom-separateur"></span>
+        <div class="zoom-groupe" style="color:#94a3b8">
+            Du <input type="date" id="zoom-debut" class="zoom-champ">
+            au <input type="date" id="zoom-fin" class="zoom-champ">
+            <button type="button" class="zoom-bouton" id="zoom-appliquer">Appliquer</button>
+        </div>
+        <span class="zoom-separateur"></span>
+        <label class="zoom-groupe" style="color:#cbd5e1;cursor:pointer">
+            <input type="checkbox" id="chocs-afficher" checked> Afficher les chocs de marché
+        </label>
+    </div>
+
+    <div class="flex flex-wrap gap-4 text-xs text-slate-300 mb-3">
+        <span class="flex items-center gap-1.5"><span style="display:inline-block;width:10px;height:10px;border-radius:9999px;background:#34d399"></span>Haussier</span>
+        <span class="flex items-center gap-1.5"><span style="display:inline-block;width:10px;height:10px;border-radius:9999px;background:#fbbf24"></span>Neutre</span>
+        <span class="flex items-center gap-1.5"><span style="display:inline-block;width:10px;height:10px;border-radius:9999px;background:#f87171"></span>Baissier</span>
+        <span class="flex items-center gap-1.5"><span style="display:inline-block;width:14px;border-top:2px dashed #94a3b8"></span>Fin du train / début du test</span>
+        <span style="color:#64748b">|</span>
+        <span style="color:#94a3b8">Chocs :</span>
+        <span class="flex items-center gap-1.5"><span style="display:inline-block;width:2px;height:12px;background:#60a5fa"></span>Financier</span>
+        <span class="flex items-center gap-1.5"><span style="display:inline-block;width:2px;height:12px;background:#c084fc"></span>Géopolitique</span>
+        <span class="flex items-center gap-1.5"><span style="display:inline-block;width:2px;height:12px;background:#f472b6"></span>Sanitaire</span>
+        <span class="flex items-center gap-1.5"><span style="display:inline-block;width:2px;height:12px;background:#e2e8f0"></span>Politique</span>
+    </div>
+    {# Conteneur à hauteur fixe : obligatoire avec maintainAspectRatio: false, sinon le graphique s'écrase ou grandit en boucle. #}
+    <div id="zoom-conteneur" style="position: relative; height: 420px; width: 100%;">
+        <canvas id="graphique-regimes"></canvas>
+        <div id="zoom-selection" class="zoom-selection"></div>
+        <div id="choc-infobulle" class="choc-infobulle"></div>
+    </div>
+    <div class="zoom-stats" id="zoom-stats"></div>
+    <div class="chocs-liste" id="chocs-liste"></div>
+    <p class="text-xs text-slate-500 mt-2">Cliquer-glisser sur le graphique pour zoomer sur une période ; double-clic pour revenir à la vue complète. Survoler un trait vertical affiche le détail du choc ; cliquer sur un choc de la liste zoome autour de sa date. La couleur de la courbe et des bandes de fond indique le régime détecté par le HMM ce jour-là. La ligne verticale pointillée sépare la période d'entraînement et la période de test.</p>
+</div>
+
+<style>
+    .stats-grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .stat-tuile { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 10px 12px; }
+    .stat-tuile .libelle { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: .04em; }
+    .stat-tuile .valeur { font-size: 22px; font-weight: 700; color: #f8fafc; margin-top: 2px; }
+    .stat-tuile .aide { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .stats-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+    .stats-table th { text-align: right; font-weight: 500; color: #94a3b8; padding: 6px 8px; border-bottom: 1px solid #334155; font-size: 12px; }
+    .stats-table th:first-child, .stats-table td:first-child { text-align: left; }
+    .stats-table td { text-align: right; color: #e2e8f0; padding: 7px 8px; border-bottom: 1px solid #1e293b; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .stats-table tr:last-child td { border-bottom: 0; }
+    .stats-table .petit { color: #64748b; font-size: 11px; }
+    .pastille-regime { display: inline-block; width: 10px; height: 10px; border-radius: 9999px; margin-right: 6px; vertical-align: -1px; }
+    .barre-proba { position: relative; height: 8px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+    .barre-proba span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+    .stats-titre { font-weight: 600; color: #f8fafc; margin: 18px 0 8px; font-size: 14px; }
+    .stats-note { font-size: 11px; color: #64748b; margin-top: 6px; }
+    .defilement { overflow-x: auto; }
+</style>
+
+<div class="bg-slate-800 border border-slate-700 rounded-xl p-4 mb-6">
+    <h2 class="font-semibold text-white mb-3">Régime actuel</h2>
+    <div id="regime-actuel"></div>
 </div>
 
 <div class="bg-slate-800 border border-slate-700 rounded-xl p-4">
-    <h2 class="font-semibold text-white mb-3">Répartition des régimes (train vs test)</h2>
-    <table class="w-full text-sm">
-        <thead>
-            <tr class="text-left text-slate-400 border-b border-slate-700">
-                <th class="py-2">Ensemble</th>
-                <th>Régime</th>
-                <th>Nombre de jours</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for ligne in repartition %}
-            <tr class="border-b border-slate-800 last:border-0 text-slate-200">
-                <td class="py-1.5">{{ ligne.ensemble }}</td>
-                <td>{{ ligne.regime }}</td>
-                <td>{{ ligne.nb_jours }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <h2 class="font-semibold text-white">Statistiques des régimes</h2>
+    <p class="text-xs text-slate-400 mb-3" id="stats-periode"></p>
+    <div class="stats-grille" id="stats-tuiles"></div>
+
+    <div class="stats-titre">Détail par régime</div>
+    <div class="defilement">
+        <table class="stats-table" id="stats-regimes"></table>
+    </div>
+    <p class="stats-note">Épisode = suite de jours consécutifs dans le même régime (les épisodes coupés par les bornes de la période affichée sont comptés pour leur partie visible). Rendement et volatilité : CAC40 les jours où ce régime est détecté, annualisés. « CAC 20 j après » : variation moyenne du CAC sur les 20 séances suivant chaque jour du régime (mesure du pouvoir prédictif). Confiance : probabilité filtrée moyenne attribuée par le HMM au régime retenu.</p>
+
+    <div class="stats-titre">Transitions : quand le régime change, vers quel régime ?</div>
+    <div class="defilement">
+        <table class="stats-table" id="stats-transitions" style="max-width:560px"></table>
+    </div>
 </div>
 
 <script>
     Chart.defaults.color = '#94a3b8';
     Chart.defaults.borderColor = '#334155';
-    const ctx = document.getElementById('graphique-regimes');
-    new Chart(ctx, {
+
+    const labels = {{ labels_json|safe }};
+    const regimeLabels = {{ regime_labels_json|safe }};
+    const prixCAC40 = {{ prix_json|safe }};
+    const regimeColors = {{ regime_colors_json|safe }};
+    const trainEndDate = {{ train_end_date|default:"null"|safe }};
+    const splitIndex = trainEndDate && labels.includes(trainEndDate) ? labels.indexOf(trainEndDate) : -1;
+    const dernierIndex = labels.length - 1;
+    const evenementsBruts = {{ evenements_json|default:"[]"|safe }};
+    const probas = {{ probas_json|default:"{}"|safe }};
+    const allocation = {{ allocation_json|default:"{}"|safe }};
+
+    const backgroundColors = {
+        haussier: 'rgba(52, 211, 153, 0.12)',
+        neutre: 'rgba(251, 191, 36, 0.12)',
+        baissier: 'rgba(248, 113, 113, 0.14)',
+    };
+
+    // Épisodes de marché connus (seuls ceux couverts par les données sont proposés).
+    const episodes = [
+        { nom: 'Bulle internet (2000-2003)', debut: '2000-09-01', fin: '2003-03-31' },
+        { nom: 'Crise financière (2007-2009)', debut: '2007-06-01', fin: '2009-03-31' },
+        { nom: 'Dette souveraine euro (2011)', debut: '2011-06-01', fin: '2011-12-31' },
+        { nom: 'Brexit (2016)', debut: '2016-05-01', fin: '2016-08-31' },
+        { nom: 'Élection présidentielle (2017)', debut: '2017-01-01', fin: '2017-06-30' },
+        { nom: 'Correction fin 2018', debut: '2018-09-01', fin: '2019-01-31' },
+        { nom: 'Krach COVID (2020)', debut: '2020-01-15', fin: '2020-06-30' },
+        { nom: 'Inflation et hausse des taux (2022)', debut: '2022-01-01', fin: '2022-10-31' },
+        { nom: 'Dissolution de l\'Assemblée (2024)', debut: '2024-05-15', fin: '2024-07-31' },
+        { nom: 'Crise gouvernementale (sept.-oct. 2025)', debut: '2025-08-15', fin: '2025-10-31' },
+        { nom: 'Droits de douane américains (2025)', debut: '2025-03-01', fin: '2025-05-31' },
+    ];
+
+    // Premier index dont la date est >= date (recherche binaire, labels triés).
+    function indexDepuisDate(date) {
+        let bas = 0, haut = dernierIndex;
+        while (bas < haut) {
+            const milieu = (bas + haut) >> 1;
+            if (labels[milieu] < date) bas = milieu + 1; else haut = milieu;
+        }
+        return bas;
+    }
+    function indexJusquaDate(date) {
+        const i = indexDepuisDate(date);
+        return labels[i] > date ? Math.max(0, i - 1) : i;
+    }
+    const dateFr = (iso) => iso.split('-').reverse().join('/');
+
+    // ---- Chocs de marché (cf. apps/dashboard/evenements.py) -------------------------------
+    const couleursChocs = { financier: '#60a5fa', geopolitique: '#c084fc', sanitaire: '#f472b6', politique: '#e2e8f0' };
+    const evenements = evenementsBruts
+        .filter((e) => e.date >= labels[0] && e.date <= labels[dernierIndex])
+        .map((e) => ({ ...e, index: indexDepuisDate(e.date) }));
+    let afficherChocs = true;
+
+    // Trait vertical + étiquette verticale pour chaque choc visible. Les étiquettes trop
+    // proches les unes des autres sont masquées (le trait reste) : zoomer les fait apparaître.
+    const chocsPlugin = {
+        id: 'chocsMarche',
+        afterDatasetsDraw(chart) {
+            if (!afficherChocs) return;
+            const { ctx, chartArea, scales } = chart;
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
+            ctx.clip();
+            ctx.font = '11px sans-serif';
+            let dernierLabelX = -Infinity;
+            evenements.forEach((e) => {
+                if (e.index < scales.x.min || e.index > scales.x.max) return;
+                const x = scales.x.getPixelForValue(e.index);
+                const couleur = couleursChocs[e.categorie] || '#e2e8f0';
+                ctx.strokeStyle = couleur;
+                ctx.globalAlpha = 0.8;
+                ctx.lineWidth = 1.2;
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                ctx.moveTo(x, chartArea.top);
+                ctx.lineTo(x, chartArea.bottom);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = couleur;
+                ctx.beginPath();
+                ctx.arc(x, chartArea.top + 4, 3.5, 0, 2 * Math.PI);
+                ctx.fill();
+                if (x - dernierLabelX >= 15) {
+                    const largeur = ctx.measureText(e.nom).width;
+                    ctx.save();
+                    ctx.translate(x + 3, chartArea.top + 12);
+                    ctx.rotate(Math.PI / 2);
+                    ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+                    ctx.fillRect(-2, -13, largeur + 4, 14);
+                    ctx.fillStyle = couleur;
+                    ctx.textBaseline = 'bottom';
+                    ctx.fillText(e.nom, 0, 0);
+                    ctx.restore();
+                    dernierLabelX = x;
+                }
+            });
+            ctx.restore();
+        },
+    };
+
+    // Bandes de régime dessinées SOUS la courbe, ligne train/test par-dessus.
+    const regimeBands = {
+        id: 'regimeBands',
+        beforeDatasetsDraw(chart) {
+            const { ctx, chartArea, scales } = chart;
+            if (!chartArea || !regimeLabels.length) return;
+            const hauteur = chartArea.bottom - chartArea.top;
+            const demiPas = labels.length > 1
+                ? Math.abs(scales.x.getPixelForValue(1) - scales.x.getPixelForValue(0)) / 2
+                : 0;
+
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, hauteur);
+            ctx.clip();
+            const iMin = Math.max(0, Math.floor(scales.x.min));
+            const iMax = Math.min(dernierIndex, Math.ceil(scales.x.max));
+            let debut = iMin;
+            for (let i = iMin + 1; i <= iMax + 1; i++) {
+                if (i === iMax + 1 || regimeLabels[i] !== regimeLabels[debut]) {
+                    const xDebut = scales.x.getPixelForValue(debut) - demiPas;
+                    const xFin = scales.x.getPixelForValue(i - 1) + demiPas;
+                    ctx.fillStyle = backgroundColors[regimeLabels[debut]] || 'rgba(148,163,184,0.05)';
+                    ctx.fillRect(xDebut, chartArea.top, Math.max(1, xFin - xDebut), hauteur);
+                    debut = i;
+                }
+            }
+            ctx.restore();
+        },
+        afterDatasetsDraw(chart) {
+            const { ctx, chartArea, scales } = chart;
+            if (splitIndex < scales.x.min || splitIndex > scales.x.max || splitIndex < 0) return;
+            const splitX = scales.x.getPixelForValue(splitIndex);
+            ctx.save();
+            ctx.strokeStyle = 'rgba(226, 232, 240, 0.9)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([8, 6]);
+            ctx.beginPath();
+            ctx.moveTo(splitX, chartArea.top);
+            ctx.lineTo(splitX, chartArea.bottom);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#e2e8f0';
+            ctx.font = '11px sans-serif';
+            ctx.textAlign = 'right';
+            ctx.fillText('train', splitX - 6, chartArea.top + 12);
+            ctx.textAlign = 'left';
+            ctx.fillText('test', splitX + 6, chartArea.top + 12);
+            ctx.restore();
+        },
+    };
+
+    const chart = new Chart(document.getElementById('graphique-regimes'), {
         type: 'line',
         data: {
-            labels: {{ labels_json|safe }},
-            datasets: [
-                { label: 'Haussier', data: {{ serie_haussier_json|safe }}, borderColor: '#34d399', backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, spanGaps: false },
-                { label: 'Neutre', data: {{ serie_neutre_json|safe }}, borderColor: '#fbbf24', backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, spanGaps: false },
-                { label: 'Baissier', data: {{ serie_baissier_json|safe }}, borderColor: '#f87171', backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2, spanGaps: false },
-            ],
+            labels,
+            datasets: [{
+                label: 'CAC40',
+                data: prixCAC40,
+                borderColor: '#e2e8f0',
+                // Chaque segment prend la couleur du régime de son point de départ.
+                segment: { borderColor: (c) => regimeColors[c.p0DataIndex] || '#e2e8f0' },
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                pointBackgroundColor: regimeColors,
+                pointBorderColor: regimeColors,
+                borderWidth: 1.5,
+                tension: 0,
+                fill: false,
+            }],
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
             interaction: { mode: 'index', intersect: false },
-            scales: { x: { ticks: { maxTicksLimit: 12 } } },
+            scales: {
+                x: {
+                    min: 0,
+                    max: dernierIndex,
+                    ticks: { maxTicksLimit: 12, maxRotation: 0 },
+                    grid: { color: 'rgba(148,163,184,0.08)' },
+                },
+                y: {
+                    beginAtZero: false,
+                    title: { display: true, text: 'Cours CAC40 (points)' },
+                    grid: { color: 'rgba(148,163,184,0.08)' },
+                },
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: (items) => items[0]?.label || '',
+                        label: (context) => {
+                            const regime = regimeLabels[context.dataIndex] || 'inconnu';
+                            const prix = context.parsed.y.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+                            return `CAC40 : ${prix} · ${regime.toUpperCase()}`;
+                        },
+                    },
+                },
+            },
+            layout: { padding: { top: 8, right: 8, bottom: 4, left: 8 } },
         },
+        plugins: [regimeBands, chocsPlugin],
     });
+
+    // ---- Zoom ----------------------------------------------------------------------------
+    const champDebut = document.getElementById('zoom-debut');
+    const champFin = document.getElementById('zoom-fin');
+    const selectEpisode = document.getElementById('zoom-episode');
+    const zoneStats = document.getElementById('zoom-stats');
+    const boutonsPresets = document.querySelectorAll('#zoom-presets .zoom-bouton');
+    champDebut.min = champFin.min = labels[0];
+    champDebut.max = champFin.max = labels[dernierIndex];
+
+    episodes
+        .filter((e) => e.fin >= labels[0] && e.debut <= labels[dernierIndex])
+        .forEach((e, i) => {
+            const option = document.createElement('option');
+            option.value = `${e.debut}|${e.fin}`;
+            option.textContent = e.nom;
+            selectEpisode.appendChild(option);
+        });
+
+    function afficherStats(i0, i1) {
+        const perf = (prixCAC40[i1] / prixCAC40[i0] - 1) * 100;
+        const comptes = { haussier: 0, neutre: 0, baissier: 0 };
+        for (let i = i0; i <= i1; i++) comptes[regimeLabels[i]] = (comptes[regimeLabels[i]] || 0) + 1;
+        const n = i1 - i0 + 1;
+        const pct = (k) => Math.round((comptes[k] / n) * 100);
+        const signe = perf >= 0 ? '+' : '';
+        zoneStats.innerHTML =
+            `<span>Période : <strong>${labels[i0]}</strong> → <strong>${labels[i1]}</strong> (${n} jours de bourse)</span>` +
+            `<span>CAC40 : <strong style="color:${perf >= 0 ? '#34d399' : '#f87171'}">${signe}${perf.toFixed(1).replace('.', ',')} %</strong></span>` +
+            `<span>Haussier <strong style="color:#34d399">${pct('haussier')} %</strong> · ` +
+            `Neutre <strong style="color:#fbbf24">${pct('neutre')} %</strong> · ` +
+            `Baissier <strong style="color:#f87171">${pct('baissier')} %</strong></span>`;
+    }
+
+    function zoomer(i0, i1, preset = null) {
+        i0 = Math.max(0, Math.min(i0, dernierIndex));
+        i1 = Math.max(0, Math.min(i1, dernierIndex));
+        if (i1 < i0) [i0, i1] = [i1, i0];
+        if (i1 - i0 < 2) i1 = Math.min(dernierIndex, i0 + 2);
+        chart.options.scales.x.min = i0;
+        chart.options.scales.x.max = i1;
+        chart.update('none');
+        champDebut.value = labels[i0];
+        champFin.value = labels[i1];
+        boutonsPresets.forEach((b) => b.classList.toggle('actif', b.dataset.preset === preset));
+        afficherStats(i0, i1);
+        calculerStatsRegimes(i0, i1);
+    }
+
+    function datePlusMois(date, mois) {
+        const d = new Date(date + 'T00:00:00');
+        d.setMonth(d.getMonth() + mois);
+        return d.toISOString().slice(0, 10);
+    }
+
+    const presets = {
+        tout: () => [0, dernierIndex],
+        train: () => [0, splitIndex >= 0 ? splitIndex : dernierIndex],
+        test: () => [splitIndex >= 0 ? splitIndex : 0, dernierIndex],
+        '5a': () => [indexDepuisDate(datePlusMois(labels[dernierIndex], -60)), dernierIndex],
+        '1a': () => [indexDepuisDate(datePlusMois(labels[dernierIndex], -12)), dernierIndex],
+        '6m': () => [indexDepuisDate(datePlusMois(labels[dernierIndex], -6)), dernierIndex],
+    };
+    boutonsPresets.forEach((bouton) => {
+        bouton.addEventListener('click', () => {
+            selectEpisode.value = '';
+            const [i0, i1] = presets[bouton.dataset.preset]();
+            zoomer(i0, i1, bouton.dataset.preset);
+        });
+    });
+
+    selectEpisode.addEventListener('change', () => {
+        if (!selectEpisode.value) return zoomer(0, dernierIndex, 'tout');
+        const [debut, fin] = selectEpisode.value.split('|');
+        zoomer(indexDepuisDate(debut), indexJusquaDate(fin));
+    });
+
+    document.getElementById('zoom-appliquer').addEventListener('click', () => {
+        if (!champDebut.value || !champFin.value) return;
+        selectEpisode.value = '';
+        zoomer(indexDepuisDate(champDebut.value), indexJusquaDate(champFin.value));
+    });
+
+    // Sélection à la souris : cliquer-glisser sur le graphique, double-clic pour tout réafficher.
+    const canvas = chart.canvas;
+    const rectangle = document.getElementById('zoom-selection');
+    let departX = null;
+
+    function xDansZone(evenement) {
+        const bornes = canvas.getBoundingClientRect();
+        const x = evenement.clientX - bornes.left;
+        return Math.max(chart.chartArea.left, Math.min(chart.chartArea.right, x));
+    }
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        departX = xDansZone(e);
+        rectangle.style.left = `${departX}px`;
+        rectangle.style.width = '0px';
+        rectangle.style.top = `${chart.chartArea.top}px`;
+        rectangle.style.bottom = `${canvas.clientHeight - chart.chartArea.bottom}px`;
+        rectangle.style.display = 'block';
+    });
+    window.addEventListener('mousemove', (e) => {
+        if (departX === null) return;
+        const x = xDansZone(e);
+        rectangle.style.left = `${Math.min(departX, x)}px`;
+        rectangle.style.width = `${Math.abs(x - departX)}px`;
+    });
+    window.addEventListener('mouseup', (e) => {
+        if (departX === null) return;
+        const x = xDansZone(e);
+        rectangle.style.display = 'none';
+        const largeur = Math.abs(x - departX);
+        const x0 = Math.min(departX, x);
+        departX = null;
+        if (largeur < 6) return; // simple clic : on laisse l'infobulle
+        selectEpisode.value = '';
+        zoomer(
+            Math.round(chart.scales.x.getValueForPixel(x0)),
+            Math.round(chart.scales.x.getValueForPixel(x0 + largeur)),
+        );
+    });
+    canvas.addEventListener('dblclick', () => {
+        selectEpisode.value = '';
+        zoomer(0, dernierIndex, 'tout');
+    });
+
+    // ---- Chocs : infobulle au survol, liste cliquable, affichage on/off --------------------
+    const infobulle = document.getElementById('choc-infobulle');
+    const listeChocs = document.getElementById('chocs-liste');
+
+    function variation(i0, i1) {
+        i1 = Math.min(i1, dernierIndex);
+        const v = (prixCAC40[i1] / prixCAC40[i0] - 1) * 100;
+        return `${v >= 0 ? '+' : ''}${v.toFixed(1).replace('.', ',')} %`;
+    }
+    function regimeA(i) {
+        return i <= dernierIndex ? regimeLabels[i] : '—';
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!afficherChocs || departX !== null) { infobulle.style.display = 'none'; return; }
+        const bornes = canvas.getBoundingClientRect();
+        const x = e.clientX - bornes.left;
+        const scales = chart.scales;
+        let proche = null, distance = 6;
+        evenements.forEach((ev) => {
+            if (ev.index < scales.x.min || ev.index > scales.x.max) return;
+            const d = Math.abs(scales.x.getPixelForValue(ev.index) - x);
+            if (d < distance) { proche = ev; distance = d; }
+        });
+        if (!proche) { infobulle.style.display = 'none'; return; }
+        const i = proche.index;
+        infobulle.innerHTML =
+            `<strong style="color:${couleursChocs[proche.categorie]}">${proche.nom}</strong>` +
+            `${dateFr(proche.date)} — ${proche.description}<br>` +
+            `<span style="color:#94a3b8">CAC40 à 1 mois : ${variation(i, i + 21)} · à 3 mois : ${variation(i, i + 63)}<br>` +
+            `Régime HMM : ${regimeA(i)} le jour même, ${regimeA(i + 5)} à J+5, ${regimeA(i + 21)} à J+21</span>`;
+        infobulle.style.display = 'block';
+        const gauche = x + 12 + infobulle.offsetWidth > canvas.clientWidth ? x - 12 - infobulle.offsetWidth : x + 12;
+        infobulle.style.left = `${gauche}px`;
+        infobulle.style.top = `${chart.chartArea.top + 24}px`;
+    });
+    canvas.addEventListener('mouseleave', () => { infobulle.style.display = 'none'; });
+
+    evenements.forEach((ev) => {
+        const puce = document.createElement('button');
+        puce.type = 'button';
+        puce.className = 'choc-puce';
+        puce.title = ev.description;
+        puce.innerHTML = `<span class="pastille" style="background:${couleursChocs[ev.categorie]}"></span>` +
+            `<span class="date">${dateFr(ev.date)}</span>${ev.nom}`;
+        // Zoom de 3 mois avant à 6 mois après le choc
+        puce.addEventListener('click', () => { selectEpisode.value = ''; zoomer(ev.index - 63, ev.index + 126); });
+        listeChocs.appendChild(puce);
+    });
+
+    document.getElementById('chocs-afficher').addEventListener('change', (e) => {
+        afficherChocs = e.target.checked;
+        listeChocs.style.display = afficherChocs ? 'flex' : 'none';
+        infobulle.style.display = 'none';
+        chart.update('none');
+    });
+
+
+    // ---- Statistiques des régimes (recalculées sur la période affichée) -------------------
+    const REGIMES = ['haussier', 'neutre', 'baissier'];
+    const couleursRegimes = { haussier: '#34d399', neutre: '#fbbf24', baissier: '#f87171' };
+    const nomsRegimes = { haussier: 'Haussier', neutre: 'Neutre', baissier: 'Baissier' };
+    const nf = (v, d = 1) => (v === null || !isFinite(v)) ? '—' : v.toFixed(d).replace('.', ',');
+    const pctSigne = (v, d = 1) => (v === null || !isFinite(v)) ? '—' : `${v >= 0 ? '+' : ''}${nf(v, d)} %`;
+    const pastille = (r) => `<span class="pastille-regime" style="background:${couleursRegimes[r]}"></span>`;
+    const mediane = (t) => {
+        if (!t.length) return null;
+        const s = [...t].sort((a, b) => a - b), m = s.length >> 1;
+        return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    };
+    const aProbas = REGIMES.every((r) => Array.isArray(probas[r]) && probas[r].length === labels.length);
+
+    function episodesEntre(i0, i1) {
+        const liste = [];
+        let debut = i0;
+        for (let i = i0 + 1; i <= i1 + 1; i++) {
+            if (i === i1 + 1 || regimeLabels[i] !== regimeLabels[debut]) {
+                liste.push({ regime: regimeLabels[debut], debut, fin: i - 1, duree: i - debut });
+                debut = i;
+            }
+        }
+        return liste;
+    }
+
+    function calculerStatsRegimes(i0, i1) {
+        const episodes = episodesEntre(i0, i1);
+        const nbJours = i1 - i0 + 1;
+        const annees = nbJours / 252;
+        const changements = episodes.length - 1;
+        const stats = {};
+        REGIMES.forEach((r) => stats[r] = { jours: 0, rdts: [], fwd: [], conf: [], episodes: [], sorties: 0 });
+
+        for (let i = i0; i <= i1; i++) {
+            const s = stats[regimeLabels[i]];
+            if (!s) continue;
+            s.jours += 1;
+            if (i > 0) s.rdts.push(Math.log(prixCAC40[i] / prixCAC40[i - 1]));
+            if (i + 20 <= dernierIndex) s.fwd.push(prixCAC40[i + 20] / prixCAC40[i] - 1);
+            if (aProbas) s.conf.push(probas[regimeLabels[i]][i]);
+        }
+        episodes.forEach((e) => { if (stats[e.regime]) stats[e.regime].episodes.push(e); });
+
+        // Matrice des transitions (uniquement aux changements de régime)
+        const transitions = {};
+        REGIMES.forEach((a) => { transitions[a] = {}; REGIMES.forEach((b) => transitions[a][b] = 0); });
+        for (let k = 1; k < episodes.length; k++) {
+            const de = episodes[k - 1].regime, vers = episodes[k].regime;
+            if (transitions[de] && vers in transitions[de]) { transitions[de][vers] += 1; stats[de].sorties += 1; }
+        }
+
+        const durees = episodes.map((e) => e.duree);
+        const confGlobale = aProbas
+            ? REGIMES.flatMap((r) => stats[r].conf).reduce((a, b) => a + b, 0) / Math.max(1, nbJours)
+            : null;
+        const plusLong = episodes.reduce((m, e) => (e.duree > m.duree ? e : m), episodes[0]);
+
+        document.getElementById('stats-periode').textContent =
+            `Période affichée : du ${dateFr(labels[i0])} au ${dateFr(labels[i1])} — ${nbJours} jours de bourse (${nf(annees, 1)} ans). Les chiffres suivent le zoom.`;
+
+        const tuiles = [
+            ['Changements de régime', `${changements}`, `${episodes.length} épisodes au total`],
+            ['Changements par an', nf(changements / annees, 1), 'fréquence des bascules'],
+            ['Durée moyenne d\'un épisode', `${nf(nbJours / episodes.length, 1)} j`, `médiane ${nf(mediane(durees), 0)} j de bourse`],
+            ['Épisode le plus long', `${plusLong.duree} j`, `${nomsRegimes[plusLong.regime]} · ${dateFr(labels[plusLong.debut])} → ${dateFr(labels[plusLong.fin])}`],
+            ['Confiance moyenne du modèle', aProbas ? `${nf(confGlobale * 100, 0)} %` : '—', 'probabilité du régime retenu'],
+        ];
+        document.getElementById('stats-tuiles').innerHTML = tuiles.map(([l, v, a]) =>
+            `<div class="stat-tuile"><div class="libelle">${l}</div><div class="valeur">${v}</div><div class="aide">${a}</div></div>`).join('');
+
+        const moy = (t) => t.length ? t.reduce((a, b) => a + b, 0) / t.length : null;
+        const ecartType = (t) => {
+            if (t.length < 2) return null;
+            const m = moy(t);
+            return Math.sqrt(t.reduce((a, b) => a + (b - m) ** 2, 0) / (t.length - 1));
+        };
+        let html = '<thead><tr><th>Régime</th><th>Part du temps</th><th>Jours</th><th>Épisodes</th>' +
+            '<th>Durée moy.</th><th>Durée méd.</th><th>Plus long</th><th>Reste le lendemain</th>' +
+            '<th>Rdt CAC annualisé</th><th>Volatilité</th><th>CAC 20 j après</th><th>Confiance</th></tr></thead><tbody>';
+        REGIMES.forEach((r) => {
+            const s = stats[r];
+            const d = s.episodes.map((e) => e.duree);
+            const long = s.episodes.reduce((m, e) => (!m || e.duree > m.duree ? e : m), null);
+            const rdtAnn = s.rdts.length ? moy(s.rdts) * 252 * 100 : null;
+            const vol = ecartType(s.rdts) !== null ? ecartType(s.rdts) * Math.sqrt(252) * 100 : null;
+            const fwd = s.fwd.length ? moy(s.fwd) * 100 : null;
+            const resteLendemain = s.jours ? (1 - s.sorties / s.jours) * 100 : null;
+            html += `<tr><td>${pastille(r)}${nomsRegimes[r]}</td>` +
+                `<td>${nf(s.jours / nbJours * 100, 0)} %</td><td>${s.jours}</td><td>${s.episodes.length}</td>` +
+                `<td>${d.length ? nf(moy(d), 1) + ' j' : '—'}</td><td>${d.length ? nf(mediane(d), 0) + ' j' : '—'}</td>` +
+                `<td>${long ? `${long.duree} j <span class="petit">(${dateFr(labels[long.debut])})</span>` : '—'}</td>` +
+                `<td>${s.jours ? nf(resteLendemain, 1) + ' %' : '—'}</td>` +
+                `<td>${pctSigne(rdtAnn)}</td><td>${vol === null ? '—' : nf(vol) + ' %'}</td>` +
+                `<td>${pctSigne(fwd, 2)}</td><td>${aProbas && s.conf.length ? nf(moy(s.conf) * 100, 0) + ' %' : '—'}</td></tr>`;
+        });
+        document.getElementById('stats-regimes').innerHTML = html + '</tbody>';
+
+        let htmlT = '<thead><tr><th>Depuis \\ vers</th>' + REGIMES.map((r) => `<th>${pastille(r)}${nomsRegimes[r]}</th>`).join('') + '<th>Total</th></tr></thead><tbody>';
+        REGIMES.forEach((de) => {
+            const total = REGIMES.reduce((a, v) => a + transitions[de][v], 0);
+            htmlT += `<tr><td>${pastille(de)}${nomsRegimes[de]}</td>` + REGIMES.map((v) => {
+                if (v === de) return '<td class="petit">—</td>';
+                const n = transitions[de][v];
+                return `<td>${n} <span class="petit">${total ? `(${nf(n / total * 100, 0)} %)` : ''}</span></td>`;
+            }).join('') + `<td>${total}</td></tr>`;
+        });
+        document.getElementById('stats-transitions').innerHTML = htmlT + '</tbody>';
+    }
+
+    // Régime du dernier jour disponible : depuis quand, et probabilités du HMM
+    (function afficherRegimeActuel() {
+        const i = dernierIndex, r = regimeLabels[i];
+        let debut = i;
+        while (debut > 0 && regimeLabels[debut - 1] === r) debut--;
+        const barres = REGIMES.map((x) => {
+            const p = aProbas ? probas[x][i] * 100 : null;
+            return `<div style="display:grid;grid-template-columns:90px 1fr 48px;align-items:center;gap:8px;font-size:12px;color:#cbd5e1">` +
+                `<span>${pastille(x)}${nomsRegimes[x]}</span>` +
+                `<div class="barre-proba"><span style="width:${p ?? 0}%;background:${couleursRegimes[x]}"></span></div>` +
+                `<span style="text-align:right;font-variant-numeric:tabular-nums">${p === null ? '—' : nf(p, 0) + ' %'}</span></div>`;
+        }).join('');
+        document.getElementById('regime-actuel').innerHTML =
+            `<div style="display:flex;flex-wrap:wrap;gap:24px;align-items:center">` +
+            `<div><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em">Au ${dateFr(labels[i])}</div>` +
+            `<div style="font-size:26px;font-weight:700;color:#f8fafc">${pastille(r)}${nomsRegimes[r]}</div>` +
+            `<div style="font-size:12px;color:#94a3b8">depuis le ${dateFr(labels[debut])} · ${i - debut + 1} jours de bourse · CAC40 ${pctSigne((prixCAC40[i] / prixCAC40[debut] - 1) * 100)} sur l'épisode</div>` +
+            (allocation.panier_par_regime && allocation.panier_par_regime[r]
+                ? `<div style="font-size:13px;color:#e2e8f0;margin-top:6px">${allocation.nom} : panier privilégié <strong style="color:${couleursRegimes[r]}">${allocation.panier_par_regime[r]}</strong>` +
+                  (allocation.mode === 'rebond' ? (r === 'baissier' ? ' — on joue le rebond' : r === 'haussier' ? ' — on sécurise les gains' : '') : '') + `</div>`
+                : '') +
+            `</div>` +
+            `<div style="flex:1;min-width:260px;display:grid;gap:6px">${barres}</div></div>`;
+    })();
+
+    zoomer(0, dernierIndex, 'tout');
 </script>
 {% else %}
 <p class="text-slate-400">Aucun régime disponible. Lance d'abord "python manage.py entrainer_hmm".</p>

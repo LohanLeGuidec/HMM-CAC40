@@ -21,6 +21,7 @@ TABLES_A_EXPORTER = (
     "beta_glissant",
     "allocations_hebdomadaires",
     "valeur_portefeuille",
+    "valeur_comparaisons",
     "transactions",
 )
 

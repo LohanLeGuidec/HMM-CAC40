@@ -21,8 +21,11 @@ def calculer_betas_glissants(con, tickers: list[str], benchmark: str, fenetre: i
     t sont utilisées.
     """
     rendements_benchmark = _rendements_ticker(con, benchmark)
+    # Dates de rééquilibrage issues du calendrier du benchmark (et non du 1er ticker de la
+    # liste) : avec un historique depuis 2000, les actions n'ont pas toutes la même date de
+    # début. Une action n'apparaît qu'aux dates où elle a déjà `fenetre` jours d'historique.
+    dates_periode = dates_rebalancement(pd.DatetimeIndex(rendements_benchmark.index), settings.FREQUENCE_REEQUILIBRAGE)
     resultats = []
-    dates_periode = None
 
     for ticker in tickers:
         rendements_actif = _rendements_ticker(con, ticker)
@@ -38,9 +41,6 @@ def calculer_betas_glissants(con, tickers: list[str], benchmark: str, fenetre: i
         momentum = np.expm1(
             aligne["actif"].rolling(settings.MOMENTUM_FENETRE_JOURS).sum()
         ).reindex(beta_brut.index)
-
-        if dates_periode is None:
-            dates_periode = dates_rebalancement(beta_brut.index, settings.FREQUENCE_REEQUILIBRAGE)
 
         beta_periode = beta_brut.reindex(dates_periode).dropna()
         momentum_periode = momentum.reindex(beta_periode.index)
