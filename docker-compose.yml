@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    image: hmm-cac40
+    container_name: hmm-cac40
+    ports:
+      - "8000:8000"
+    volumes:
+      # Données persistantes : DuckDB (marche.duckdb), base Django (db.sqlite3), exports Power BI
+      - ./data:/app/data
+    environment:
+      DJANGO_DEBUG: "1"
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,0.0.0.0"
+      DJANGO_SQLITE_PATH: /app/data/db.sqlite3
+      # 1 = relancer tout le pipeline (import, HMM, bêtas, allocations, backtest) au démarrage
+      RECALCULER: "0"

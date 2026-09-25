@@ -62,6 +62,30 @@ python manage.py exporter_powerbi            # export des données en CSV pour P
 python manage.py runserver                   # dashboard sur http://127.0.0.1:8000
 ```
 
+## Lancer avec Docker
+
+Prérequis : [Docker Desktop](https://www.docker.com/products/docker-desktop/) installé et démarré.
+
+```bash
+docker compose up --build        # construit l'image et lance le tableau de bord
+```
+
+Le tableau de bord est ensuite disponible sur http://localhost:8000.
+
+- Le dossier `data/` est partagé avec le conteneur : la base DuckDB et la base Django y sont conservées d'un lancement à l'autre.
+- Si `data/marche.duckdb` n'existe pas (par exemple après un `git clone`), le conteneur lance automatiquement tout le pipeline au premier démarrage (import Yahoo Finance et FRED, HMM, bêtas, allocations, backtest). Il faut un accès Internet et compter plusieurs minutes.
+- Pour tout recalculer : passer `RECALCULER: "1"` dans `docker-compose.yml`, puis relancer `docker compose up`.
+
+Commandes utiles :
+
+```bash
+docker compose up -d                                          # lancer en arrière-plan
+docker compose logs -f                                        # suivre les journaux
+docker compose exec web python manage.py lancer_backtest      # lancer une commande dans le conteneur
+docker compose exec web python -m pytest -q                   # tests
+docker compose down                                           # arrêter
+```
+
 ## Tests
 
 ```bash

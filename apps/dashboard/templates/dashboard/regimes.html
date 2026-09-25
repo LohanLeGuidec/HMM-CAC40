@@ -70,9 +70,17 @@
         <div id="zoom-selection" class="zoom-selection"></div>
         <div id="choc-infobulle" class="choc-infobulle"></div>
     </div>
+    <div id="probas-bloc">
+        <div class="flex flex-wrap items-center gap-4 text-xs text-slate-400 mt-4 mb-1">
+            <span>Probabilités filtrées du HMM, jour par jour (somme = 100 %) — suivent la période affichée</span>
+        </div>
+        <div style="position: relative; height: 150px; width: 100%;">
+            <canvas id="graphique-probas"></canvas>
+        </div>
+    </div>
     <div class="zoom-stats" id="zoom-stats"></div>
     <div class="chocs-liste" id="chocs-liste"></div>
-    <p class="text-xs text-slate-500 mt-2">Cliquer-glisser sur le graphique pour zoomer sur une période ; double-clic pour revenir à la vue complète. Survoler un trait vertical affiche le détail du choc ; cliquer sur un choc de la liste zoome autour de sa date. La couleur de la courbe et des bandes de fond indique le régime détecté par le HMM ce jour-là. La ligne verticale pointillée sépare la période d'entraînement et la période de test.</p>
+    <p class="text-xs text-slate-500 mt-2">Cliquer-glisser sur le graphique pour zoomer sur une période ; double-clic pour revenir à la vue complète. Survoler un trait vertical affiche le détail du choc ; cliquer sur un choc de la liste zoome autour de sa date. La couleur de la courbe et des bandes de fond indique le régime détecté par le HMM ce jour-là. La ligne verticale pointillée sépare la période d'entraînement et la période de test. Les boutons « Train » et « Test » restreignent tout à la période choisie : graphique, probabilités, régime en fin de période et statistiques.</p>
 </div>
 
 <style>
@@ -96,7 +104,7 @@
 </style>
 
 <div class="bg-slate-800 border border-slate-700 rounded-xl p-4 mb-6">
-    <h2 class="font-semibold text-white mb-3">Régime actuel</h2>
+    <h2 class="font-semibold text-white mb-3" id="regime-titre">Régime actuel</h2>
     <div id="regime-actuel"></div>
 </div>
 
@@ -276,6 +284,7 @@
         },
     };
 
+    const LARGEUR_AXE_Y = 72; // identique sur les deux graphiques pour aligner les dates
     const chart = new Chart(document.getElementById('graphique-regimes'), {
         type: 'line',
         data: {
@@ -310,6 +319,7 @@
                 y: {
                     beginAtZero: false,
                     title: { display: true, text: 'Cours CAC40 (points)' },
+                    afterFit: (echelle) => { echelle.width = LARGEUR_AXE_Y; },
                     grid: { color: 'rgba(148,163,184,0.08)' },
                 },
             },
@@ -377,6 +387,14 @@
         boutonsPresets.forEach((b) => b.classList.toggle('actif', b.dataset.preset === preset));
         afficherStats(i0, i1);
         calculerStatsRegimes(i0, i1);
+        if (chartProbas) {
+            chartProbas.options.scales.x.min = i0;
+            chartProbas.options.scales.x.max = i1;
+            chartProbas.update('none');
+        }
+        afficherRegime(i0, i1);
+        // La liste des chocs ne montre que ceux de la période affichée
+        evenements.forEach((ev) => { if (ev.puce) ev.puce.style.display = ev.index >= i0 && ev.index <= i1 ? '' : 'none'; });
     }
 
     function datePlusMois(date, mois) {
@@ -388,7 +406,7 @@
     const presets = {
         tout: () => [0, dernierIndex],
         train: () => [0, splitIndex >= 0 ? splitIndex : dernierIndex],
-        test: () => [splitIndex >= 0 ? splitIndex : 0, dernierIndex],
+        test: () => [splitIndex >= 0 ? Math.min(splitIndex + 1, dernierIndex) : 0, dernierIndex],
         '5a': () => [indexDepuisDate(datePlusMois(labels[dernierIndex], -60)), dernierIndex],
         '1a': () => [indexDepuisDate(datePlusMois(labels[dernierIndex], -12)), dernierIndex],
         '6m': () => [indexDepuisDate(datePlusMois(labels[dernierIndex], -6)), dernierIndex],
@@ -505,6 +523,7 @@
         // Zoom de 3 mois avant à 6 mois après le choc
         puce.addEventListener('click', () => { selectEpisode.value = ''; zoomer(ev.index - 63, ev.index + 126); });
         listeChocs.appendChild(puce);
+        ev.puce = puce;
     });
 
     document.getElementById('chocs-afficher').addEventListener('change', (e) => {
@@ -625,30 +644,103 @@
         document.getElementById('stats-transitions').innerHTML = htmlT + '</tbody>';
     }
 
-    // Régime du dernier jour disponible : depuis quand, et probabilités du HMM
-    (function afficherRegimeActuel() {
-        const i = dernierIndex, r = regimeLabels[i];
-        let debut = i;
-        while (debut > 0 && regimeLabels[debut - 1] === r) debut--;
-        const barres = REGIMES.map((x) => {
-            const p = aProbas ? probas[x][i] * 100 : null;
+    // ---- Probabilités filtrées du HMM (aire empilée, synchronisée avec le zoom) ------------
+    const nomsPeriodes = { tout: 'toute la période', train: 'la période d\'entraînement', test: 'la période de test' };
+    const remplissages = { baissier: 'rgba(248, 113, 113, 0.75)', neutre: 'rgba(251, 191, 36, 0.75)', haussier: 'rgba(52, 211, 153, 0.75)' };
+    let chartProbas = null;
+    if (aProbas) {
+        chartProbas = new Chart(document.getElementById('graphique-probas'), {
+            type: 'line',
+            data: {
+                labels,
+                datasets: ['baissier', 'neutre', 'haussier'].map((r, k) => ({
+                    label: nomsRegimes[r],
+                    data: probas[r].map((v) => v * 100),
+                    backgroundColor: remplissages[r],
+                    borderWidth: 0,
+                    pointRadius: 0,
+                    fill: k === 0 ? 'origin' : '-1',
+                    tension: 0,
+                })),
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: { min: 0, max: dernierIndex, ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
+                    y: {
+                        stacked: true, min: 0, max: 100,
+                        ticks: { stepSize: 50, callback: (v) => `${v} %` },
+                        grid: { color: 'rgba(148,163,184,0.08)' },
+                        afterFit: (echelle) => { echelle.width = LARGEUR_AXE_Y; },
+                    },
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        itemSort: (a, b) => b.datasetIndex - a.datasetIndex,
+                        callbacks: { label: (c) => `${c.dataset.label} : ${nf(c.parsed.y, 0)} %` },
+                    },
+                },
+                layout: { padding: { top: 4, right: 8, bottom: 0, left: 8 } },
+            },
+            plugins: [{ id: 'separationTrainTest', afterDatasetsDraw: regimeBands.afterDatasetsDraw }],
+        });
+    } else {
+        document.getElementById('probas-bloc').style.display = 'none';
+    }
+
+    // ---- Régime en fin de période affichée + probabilités moyennes sur la période ---------
+    function barresProbas(valeurs) {
+        return REGIMES.map((x) => {
+            const p = valeurs[x];
             return `<div style="display:grid;grid-template-columns:90px 1fr 48px;align-items:center;gap:8px;font-size:12px;color:#cbd5e1">` +
                 `<span>${pastille(x)}${nomsRegimes[x]}</span>` +
                 `<div class="barre-proba"><span style="width:${p ?? 0}%;background:${couleursRegimes[x]}"></span></div>` +
                 `<span style="text-align:right;font-variant-numeric:tabular-nums">${p === null ? '—' : nf(p, 0) + ' %'}</span></div>`;
         }).join('');
+    }
+
+    function afficherRegime(i0, i1) {
+        const i = i1, r = regimeLabels[i];
+        // Début de l'épisode en cours, sans remonter avant le début de la période affichée
+        let debut = i;
+        while (debut > i0 && regimeLabels[debut - 1] === r) debut--;
+        const tronque = debut === i0 && i0 > 0 && regimeLabels[i0 - 1] === r;
+
+        const probasFin = {}, probasMoy = {};
+        REGIMES.forEach((x) => {
+            probasFin[x] = aProbas ? probas[x][i] * 100 : null;
+            if (aProbas) {
+                let somme = 0;
+                for (let k = i0; k <= i1; k++) somme += probas[x][k];
+                probasMoy[x] = somme / (i1 - i0 + 1) * 100;
+            } else probasMoy[x] = null;
+        });
+
+        const presetActif = [...boutonsPresets].find((b) => b.classList.contains('actif'))?.dataset.preset;
+        const libellePeriode = nomsPeriodes[presetActif] || `la période du ${dateFr(labels[i0])} au ${dateFr(labels[i1])}`;
+        document.getElementById('regime-titre').textContent = i1 === dernierIndex
+            ? 'Régime actuel'
+            : `Régime en fin de période (${dateFr(labels[i1])})`;
+
+        const sousTitre = (t) => `<div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">${t}</div>`;
         document.getElementById('regime-actuel').innerHTML =
-            `<div style="display:flex;flex-wrap:wrap;gap:24px;align-items:center">` +
-            `<div><div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em">Au ${dateFr(labels[i])}</div>` +
+            `<div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start">` +
+            `<div style="min-width:240px">${sousTitre(`Au ${dateFr(labels[i])}`)}` +
             `<div style="font-size:26px;font-weight:700;color:#f8fafc">${pastille(r)}${nomsRegimes[r]}</div>` +
-            `<div style="font-size:12px;color:#94a3b8">depuis le ${dateFr(labels[debut])} · ${i - debut + 1} jours de bourse · CAC40 ${pctSigne((prixCAC40[i] / prixCAC40[debut] - 1) * 100)} sur l'épisode</div>` +
+            `<div style="font-size:12px;color:#94a3b8">${tronque ? 'au moins ' : ''}depuis le ${dateFr(labels[debut])} · ${i - debut + 1} jours de bourse · CAC40 ${pctSigne((prixCAC40[i] / prixCAC40[debut] - 1) * 100)} sur l'épisode</div>` +
             (allocation.panier_par_regime && allocation.panier_par_regime[r]
                 ? `<div style="font-size:13px;color:#e2e8f0;margin-top:6px">${allocation.nom} : panier privilégié <strong style="color:${couleursRegimes[r]}">${allocation.panier_par_regime[r]}</strong>` +
                   (allocation.mode === 'rebond' ? (r === 'baissier' ? ' — on joue le rebond' : r === 'haussier' ? ' — on sécurise les gains' : '') : '') + `</div>`
                 : '') +
             `</div>` +
-            `<div style="flex:1;min-width:260px;display:grid;gap:6px">${barres}</div></div>`;
-    })();
+            `<div style="flex:1;min-width:240px;display:grid;gap:6px">${sousTitre(`Probabilités le ${dateFr(labels[i])}`)}${barresProbas(probasFin)}</div>` +
+            `<div style="flex:1;min-width:240px;display:grid;gap:6px">${sousTitre(`Probabilité moyenne sur ${libellePeriode}`)}${barresProbas(probasMoy)}</div>` +
+            `</div>`;
+    }
 
     zoomer(0, dernierIndex, 'tout');
 </script>
