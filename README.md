@@ -14,6 +14,10 @@ L’objectif est d’évaluer si la combinaison d’un modèle de régimes de ma
 - Export de données pour Power BI
 - Dashboard Django pour visualisation
 
+## Démonstration
+
+https://github.com/user-attachments/assets/bdf0662e-8ae9-495c-bbc3-db94172a5594
+
 ## Architecture du projet
 
 ```
