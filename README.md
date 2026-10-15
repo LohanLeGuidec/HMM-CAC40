@@ -98,14 +98,18 @@ python -m pytest -q
 
 ## Résultat actuel
 
-Le backtest montre une sous-performance du CAC40 sur la période testée, avec une performance annualisée de -4.21 % contre +4.60 % pour l’indice de référence. Ce résultat est documenté dans [docs/05_backtest_metriques.md](docs/05_backtest_metriques.md).
+Les résultats de référence ci-dessous sont ceux du backtest sur la période de test **octobre 2018 à septembre 2026**, avec un capital initial de 1 000 000 €. Les portefeuilles sont valorisés au cours de clôture, sans dividendes ; le CAC 40 est l’indice de prix ^FCHI.
 
-Les causes identifiées sont notamment :
+| Stratégie | Rendement annualisé | Sharpe | Drawdown maximal |
+|---|---:|---:|---:|
+| **Rebond (HMM)** — allocation contrariante selon les probabilités de régime | **8,5 %** | **0,39** | -38,3 % |
+| **1/3 par panier (sans HMM)** — répartition égale entre les paniers défensif, neutre et offensif | 7,2 % | 0,32 | **-36,6 %** |
+| **CAC 40** — achat-conservation de l’indice | 6,1 % | 0,26 | -38,6 % |
+| **Suiveur (HMM)** — allocation suivant directement le régime détecté | 5,7 % | 0,21 | -38,7 % |
 
-- effet rebond post-krach inhérent à un détecteur de régime rétrospectif ;
-- écart structurel entre un portefeuille stock-picking et un indice pondéré par capitalisation.
+Sur cette période, la stratégie de rebond obtient le rendement annualisé et le Sharpe les plus élevés. Le portefeuille 1/3 par panier, lui, ne dépend pas du signal HMM et affiche le drawdown maximal le plus faible parmi ces quatre résultats. Ces performances historiques ne garantissent pas les performances futures : la stratégie de rebond dépend notamment des reprises après les phases baissières, et l’univers d’actions actuel du CAC 40 introduit un biais de survivance. Les trois portefeuilles actifs sélectionnent des actions de l’univers CAC 40 ; ils ne répliquent pas l’indice, dont les pondérations sont fondées sur la capitalisation.
 
-Il ne s’agit donc pas d’un bug, mais d’un diagnostic méthodologique documenté.
+Les chiffres, la méthodologie et les limites sont détaillés dans [docs/04_beta_allocation.md](docs/04_beta_allocation.md) et [docs/05_backtest_metriques.md](docs/05_backtest_metriques.md).
 
 ## Objectif du dépôt
 
